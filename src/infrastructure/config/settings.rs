@@ -16,10 +16,14 @@ pub struct Settings {
     pub port: u16,
 
     pub jwt: JwtSettings,
+    #[serde(default)]
     pub redis: RedisSettings,
     pub database: DatabaseSettings,
+    #[serde(default)]
     pub websocket: WebSocketSettings,
+    #[serde(default)]
     pub cluster: ClusterSettings,
+    #[serde(default)]
     pub otel: OtelSettings,
 }
 
@@ -50,7 +54,7 @@ impl From<&JwtSettings> for JwtConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RedisSettings {
     #[serde(default = "default_redis_url")]
     pub url: String,
@@ -127,7 +131,7 @@ fn default_migrations_path() -> String {
     "./migrations".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct WebSocketSettings {
     #[serde(default = "default_max_connections")]
     pub max_connections: usize,
@@ -155,7 +159,7 @@ fn default_connection_timeout() -> u64 {
     60
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ClusterSettings {
     #[serde(default)]
     pub enabled: bool,
