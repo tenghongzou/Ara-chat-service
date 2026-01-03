@@ -45,11 +45,11 @@ Project status and planned features for Ara Chat Service.
 - [x] Health check endpoints / 健康檢查端點
 - [x] Structured logging / 結構化日誌
 
-### Testing / 測試 *(v1.0.2)*
-- [x] Unit tests: 175 tests passing / 單元測試：175 項通過
+### Testing / 測試 *(v1.0.3)*
+- [x] Unit tests: 184 tests passing / 單元測試：184 項通過
   - validation (sanitizer, limits, error): 33 tests
   - mention/parser: 14 tests
-  - message (types, handler, router, storage, offline_queue): 71 tests
+  - message (types, handler, router, storage, offline_queue): 80 tests
   - connection/manager: 18 tests
   - conversation/direct_lookup: 7 tests
   - presence/tracker: 22 tests
@@ -72,7 +72,7 @@ Project status and planned features for Ara Chat Service.
 ### High Priority / 高優先級
 
 #### Testing / 測試
-- [x] Unit tests for domain layer (175 tests) / 領域層單元測試 *(Completed in v1.0.2)*
+- [x] Unit tests for domain layer (184 tests) / 領域層單元測試 *(Completed in v1.0.3)*
 - [ ] Integration tests / 整合測試
 - [ ] WebSocket protocol tests / WebSocket 協議測試
 - [ ] Database migration tests / 資料庫遷移測試
@@ -126,10 +126,10 @@ Project status and planned features for Ara Chat Service.
 
 ### Security / 安全性
 - [x] Message content not sanitized before storage / 訊息內容未消毒 *(Fixed in v1.0.1)*
-- [ ] Search query only escapes single quotes / 搜尋查詢轉義不完整
+- [x] Search query only escapes single quotes / 搜尋查詢轉義不完整 *(Fixed in v1.0.3)*
 
 ### Performance / 效能
-- [ ] Full-text search lacks dedicated index / 全文搜尋缺少專用索引
+- [x] Full-text search lacks dedicated index / 全文搜尋缺少專用索引 *(Fixed in v1.0.3)*
 - [ ] pg_partman not auto-initialized / pg_partman 未自動初始化
 
 ### Documentation / 文檔
@@ -149,8 +149,10 @@ Project status and planned features for Ara Chat Service.
 ## Milestones / 里程碑
 
 ### v1.1.0 (Planned)
-- ~~Unit tests coverage > 80%~~ *(Completed: 175 tests)*
+- ~~Unit tests coverage > 80%~~ *(Completed: 184 tests)*
 - ~~Input sanitization~~ *(Completed)*
+- ~~Search query security~~ *(Completed)*
+- ~~Full-text search index~~ *(Completed)*
 - File upload support
 
 ### v1.2.0 (Planned)

@@ -334,11 +334,33 @@ impl MessageStorage {
         let limit = limit.min(50) as i64;
 
         // Escape special characters for tsquery
+        // PostgreSQL tsquery special characters: & | ! : * ( ) \ '
         let search_query = search_term
             .split_whitespace()
-            .map(|w| format!("{}:*", w.replace('\'', "''")))
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                // Remove all tsquery special characters and escape single quotes
+                let cleaned: String = w
+                    .chars()
+                    .filter(|c| !matches!(c, '&' | '|' | '!' | ':' | '*' | '(' | ')' | '\\'))
+                    .collect();
+                // Escape single quotes for SQL
+                let escaped = cleaned.replace('\'', "''");
+                // Only add prefix search if we have valid characters
+                if escaped.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}:*", escaped)
+                }
+            })
+            .filter(|s| !s.is_empty())
             .collect::<Vec<_>>()
             .join(" & ");
+
+        // If no valid search terms after escaping, return empty results
+        if search_query.is_empty() {
+            return Ok((vec![], 0));
+        }
 
         let (messages, total) = if let Some(conv_id) = conversation_id {
             // Search within a specific conversation
@@ -549,5 +571,84 @@ mod tests {
     fn test_content_type_from_string() {
         // Test the content type mapping in MessageRow::into_chat_message
         assert_eq!(ContentType::Text, ContentType::default());
+    }
+
+    // ==================== Search Query Escaping Tests ====================
+
+    /// Helper to simulate the search query escaping logic
+    fn escape_search_query(search_term: &str) -> String {
+        search_term
+            .split_whitespace()
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                let cleaned: String = w
+                    .chars()
+                    .filter(|c| !matches!(c, '&' | '|' | '!' | ':' | '*' | '(' | ')' | '\\'))
+                    .collect();
+                let escaped = cleaned.replace('\'', "''");
+                if escaped.is_empty() {
+                    String::new()
+                } else {
+                    format!("{}:*", escaped)
+                }
+            })
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" & ")
+    }
+
+    #[test]
+    fn test_search_escape_normal_text() {
+        let result = escape_search_query("hello world");
+        assert_eq!(result, "hello:* & world:*");
+    }
+
+    #[test]
+    fn test_search_escape_single_quotes() {
+        let result = escape_search_query("it's a test");
+        assert_eq!(result, "it''s:* & a:* & test:*");
+    }
+
+    #[test]
+    fn test_search_escape_operators() {
+        // Tsquery operators should be stripped
+        let result = escape_search_query("hello & world | test");
+        assert_eq!(result, "hello:* & world:* & test:*");
+    }
+
+    #[test]
+    fn test_search_escape_special_chars() {
+        let result = escape_search_query("test:* (foo) !bar");
+        assert_eq!(result, "test:* & foo:* & bar:*");
+    }
+
+    #[test]
+    fn test_search_escape_backslash() {
+        let result = escape_search_query("path\\to\\file");
+        assert_eq!(result, "pathtofile:*");
+    }
+
+    #[test]
+    fn test_search_escape_empty_after_cleaning() {
+        let result = escape_search_query("& | !");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_search_escape_mixed_content() {
+        let result = escape_search_query("user's input & other:stuff");
+        assert_eq!(result, "user''s:* & input:* & otherstuff:*");
+    }
+
+    #[test]
+    fn test_search_escape_unicode() {
+        let result = escape_search_query("你好 世界");
+        assert_eq!(result, "你好:* & 世界:*");
+    }
+
+    #[test]
+    fn test_search_escape_multiple_spaces() {
+        let result = escape_search_query("hello    world");
+        assert_eq!(result, "hello:* & world:*");
     }
 }
