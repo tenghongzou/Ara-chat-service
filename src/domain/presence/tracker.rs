@@ -439,3 +439,211 @@ pub enum PresenceError {
     #[error("Redis error: {0}")]
     Redis(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== PresenceInfo Tests ====================
+
+    #[test]
+    fn test_presence_info_serialization() {
+        let info = PresenceInfo {
+            user_id: Uuid::new_v4(),
+            status: PresenceStatus::Online,
+            server_id: "server-1".to_string(),
+            last_seen: 1704067200000,
+            connections: 2,
+        };
+
+        let serialized = serde_json::to_string(&info).unwrap();
+        let deserialized: PresenceInfo = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(info.user_id, deserialized.user_id);
+        assert_eq!(info.server_id, deserialized.server_id);
+        assert_eq!(info.connections, deserialized.connections);
+    }
+
+    #[test]
+    fn test_presence_info_debug() {
+        let info = PresenceInfo {
+            user_id: Uuid::new_v4(),
+            status: PresenceStatus::Away,
+            server_id: "test".to_string(),
+            last_seen: 0,
+            connections: 1,
+        };
+
+        let debug = format!("{:?}", info);
+        assert!(debug.contains("PresenceInfo"));
+        assert!(debug.contains("Away"));
+    }
+
+    // ==================== PresenceTracker No-Redis Tests ====================
+
+    #[test]
+    fn test_tracker_new() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        assert_eq!(tracker.server_id, "server-1");
+        assert_eq!(tracker.prefix, "chat:presence");
+        assert_eq!(tracker.ttl_seconds, 120);
+    }
+
+    #[test]
+    fn test_presence_key_format() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let key = tracker.presence_key(user_id);
+        assert_eq!(key, "chat:presence:550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn test_subscriber_key_format() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let key = tracker.subscriber_key(user_id);
+        assert_eq!(key, "chat:presence:subscribers:550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[test]
+    fn test_subscriptions_key_format() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let key = tracker.subscriptions_key(user_id);
+        assert_eq!(key, "chat:presence:subscriptions:550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[tokio::test]
+    async fn test_update_presence_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let result = tracker.update_presence(user_id, PresenceStatus::Online).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mark_online_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let result = tracker.mark_online(user_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_mark_offline_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let result = tracker.mark_offline(user_id).await.unwrap();
+        assert!(result); // Returns true when no Redis
+    }
+
+    #[tokio::test]
+    async fn test_get_presence_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let result = tracker.get_presence(user_id).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_get_presences_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_ids = vec![Uuid::new_v4(), Uuid::new_v4()];
+
+        let result = tracker.get_presences(&user_ids).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_presences_empty_input() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+
+        let result = tracker.get_presences(&[]).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_refresh_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let result = tracker.refresh(user_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let subscriber_id = Uuid::new_v4();
+        let targets = vec![Uuid::new_v4(), Uuid::new_v4()];
+
+        let result = tracker.subscribe(subscriber_id, &targets).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_empty_targets() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let subscriber_id = Uuid::new_v4();
+
+        let result = tracker.subscribe(subscriber_id, &[]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_unsubscribe_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let subscriber_id = Uuid::new_v4();
+        let targets = vec![Uuid::new_v4()];
+
+        let result = tracker.unsubscribe(subscriber_id, &targets).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_unsubscribe_empty_targets() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let subscriber_id = Uuid::new_v4();
+
+        let result = tracker.unsubscribe(subscriber_id, &[]).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_clear_subscriptions_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let subscriber_id = Uuid::new_v4();
+
+        let result = tracker.clear_subscriptions(subscriber_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_get_subscribers_no_redis() {
+        let tracker = PresenceTracker::new(None, "server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let result = tracker.get_subscribers(user_id).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ==================== PresenceError Tests ====================
+
+    #[test]
+    fn test_presence_error_display() {
+        let err = PresenceError::Redis("connection refused".to_string());
+        assert_eq!(err.to_string(), "Redis error: connection refused");
+    }
+
+    #[test]
+    fn test_presence_error_debug() {
+        let err = PresenceError::Redis("test".to_string());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("Redis"));
+        assert!(debug.contains("test"));
+    }
+}

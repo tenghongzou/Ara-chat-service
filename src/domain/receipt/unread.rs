@@ -93,3 +93,86 @@ pub enum UnreadError {
     #[error("Redis error: {0}")]
     Redis(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_unread_counter_new_no_redis() {
+        let counter = UnreadCounter::new(None);
+        assert!(counter.cache.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_increment_no_redis() {
+        let counter = UnreadCounter::new(None);
+        let user_id = Uuid::new_v4();
+        let conv_id = Uuid::new_v4();
+
+        let result = counter.increment(user_id, conv_id).await.unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_reset_no_redis() {
+        let counter = UnreadCounter::new(None);
+        let user_id = Uuid::new_v4();
+        let conv_id = Uuid::new_v4();
+
+        let result = counter.reset(user_id, conv_id).await.unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_count_no_redis() {
+        let counter = UnreadCounter::new(None);
+        let user_id = Uuid::new_v4();
+        let conv_id = Uuid::new_v4();
+
+        let result = counter.get_count(user_id, conv_id).await.unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_total_no_redis() {
+        let counter = UnreadCounter::new(None);
+        let user_id = Uuid::new_v4();
+
+        let result = counter.get_total(user_id).await.unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_all_counts_no_redis() {
+        let counter = UnreadCounter::new(None);
+        let user_id = Uuid::new_v4();
+
+        let result = counter.get_all_counts(user_id).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_sync_to_client_no_redis() {
+        let counter = UnreadCounter::new(None);
+        let user_id = Uuid::new_v4();
+
+        let (total, counts) = counter.sync_to_client(user_id).await.unwrap();
+        assert_eq!(total, 0);
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn test_unread_error_display() {
+        let err = UnreadError::Redis("connection failed".to_string());
+        assert_eq!(err.to_string(), "Redis error: connection failed");
+    }
+
+    #[test]
+    fn test_unread_error_debug() {
+        let err = UnreadError::Redis("test".to_string());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("Redis"));
+        assert!(debug.contains("test"));
+    }
+}

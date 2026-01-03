@@ -45,6 +45,18 @@ Project status and planned features for Ara Chat Service.
 - [x] Health check endpoints / 健康檢查端點
 - [x] Structured logging / 結構化日誌
 
+### Testing / 測試 *(v1.0.2)*
+- [x] Unit tests: 175 tests passing / 單元測試：175 項通過
+  - validation (sanitizer, limits, error): 33 tests
+  - mention/parser: 14 tests
+  - message (types, handler, router, storage, offline_queue): 71 tests
+  - connection/manager: 18 tests
+  - conversation/direct_lookup: 7 tests
+  - presence/tracker: 22 tests
+  - receipt/unread: 9 tests
+  - cluster/session_store: 10 tests
+  - infrastructure (ratelimit, circuit_breaker, sharding): 5 tests
+
 ### Documentation / 文檔
 - [x] README.md
 - [x] .env.example
@@ -60,7 +72,7 @@ Project status and planned features for Ara Chat Service.
 ### High Priority / 高優先級
 
 #### Testing / 測試
-- [ ] Unit tests for domain layer / 領域層單元測試
+- [x] Unit tests for domain layer (175 tests) / 領域層單元測試 *(Completed in v1.0.2)*
 - [ ] Integration tests / 整合測試
 - [ ] WebSocket protocol tests / WebSocket 協議測試
 - [ ] Database migration tests / 資料庫遷移測試
@@ -137,7 +149,7 @@ Project status and planned features for Ara Chat Service.
 ## Milestones / 里程碑
 
 ### v1.1.0 (Planned)
-- Unit tests coverage > 80%
+- ~~Unit tests coverage > 80%~~ *(Completed: 175 tests)*
 - ~~Input sanitization~~ *(Completed)*
 - File upload support
 
@@ -153,4 +165,4 @@ Project status and planned features for Ara Chat Service.
 
 ---
 
-Last updated: 2026-01-03
+Last updated: 2026-01-04

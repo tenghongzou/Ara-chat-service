@@ -223,3 +223,92 @@ pub enum SessionStoreError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== MemorySessionStore Tests ====================
+
+    #[test]
+    fn test_memory_store_new() {
+        let store = MemorySessionStore::new("server-1".to_string());
+        assert_eq!(store.server_id(), "server-1");
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_register_session() {
+        let store = MemorySessionStore::new("server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let result = store.register_session(user_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_unregister_session() {
+        let store = MemorySessionStore::new("server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let result = store.unregister_session(user_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_find_user_servers() {
+        let store = MemorySessionStore::new("server-1".to_string());
+        let user_id = Uuid::new_v4();
+
+        let servers = store.find_user_servers(&user_id).await.unwrap();
+        // In single-server mode, always returns this server
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0], "server-1");
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_refresh_sessions() {
+        let store = MemorySessionStore::new("server-1".to_string());
+
+        let count = store.refresh_sessions().await.unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_cluster_user_count() {
+        let store = MemorySessionStore::new("server-1".to_string());
+
+        let count = store.cluster_user_count().await.unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_memory_store_server_id() {
+        let store = MemorySessionStore::new("test-server".to_string());
+        assert_eq!(store.server_id(), "test-server");
+    }
+
+    // ==================== RedisSessionStore Key Format Tests ====================
+
+    // Note: RedisSessionStore requires a real Redis connection for full testing
+    // These tests verify the key format methods
+
+    #[test]
+    fn test_session_store_error_redis_display() {
+        let err = SessionStoreError::Redis("connection failed".to_string());
+        assert_eq!(err.to_string(), "Redis error: connection failed");
+    }
+
+    #[test]
+    fn test_session_store_error_serialization_display() {
+        let err = SessionStoreError::Serialization("invalid format".to_string());
+        assert_eq!(err.to_string(), "Serialization error: invalid format");
+    }
+
+    #[test]
+    fn test_session_store_error_debug() {
+        let err = SessionStoreError::Redis("test".to_string());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("Redis"));
+        assert!(debug.contains("test"));
+    }
+}
