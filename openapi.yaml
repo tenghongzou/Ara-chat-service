@@ -1,0 +1,679 @@
+openapi: 3.0.3
+info:
+  title: Ara Chat Service API
+  description: |
+    Real-time chat service with WebSocket support.
+
+    ## Authentication
+    All endpoints require JWT authentication via Bearer token.
+
+    ## WebSocket
+    For real-time messaging, connect to `ws://host:8082/ws?token=JWT_TOKEN`
+  version: 1.0.0
+  contact:
+    name: Ara Team
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:8082
+    description: Development server
+  - url: https://api.example.com
+    description: Production server
+
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Conversations
+    description: Conversation management
+  - name: Messages
+    description: Message operations
+  - name: Search
+    description: Search functionality
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Basic health check
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Kubernetes liveness probe
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+        '503':
+          description: Service is not alive
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Kubernetes readiness probe
+      description: Checks Redis and PostgreSQL connectivity
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Service is not ready
+
+  /health/detailed:
+    get:
+      tags: [Health]
+      summary: Detailed health report
+      security: []
+      responses:
+        '200':
+          description: Detailed health information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailedHealthResponse'
+
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      security: []
+      responses:
+        '200':
+          description: Prometheus metrics in text format
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/v1/conversations:
+    get:
+      tags: [Conversations]
+      summary: List user's conversations
+      parameters:
+        - name: before
+          in: query
+          description: Pagination cursor (timestamp in milliseconds)
+          schema:
+            type: string
+        - name: limit
+          in: query
+          description: Results per page (max 50)
+          schema:
+            type: integer
+            default: 20
+            maximum: 50
+      responses:
+        '200':
+          description: List of conversations
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    post:
+      tags: [Conversations]
+      summary: Create a new conversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConversationRequest'
+      responses:
+        '200':
+          description: Created conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/conversations/{id}:
+    get:
+      tags: [Conversations]
+      summary: Get conversation details
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Conversation details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/conversations/{id}/messages:
+    get:
+      tags: [Messages]
+      summary: Get message history
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+        - name: before
+          in: query
+          description: Message ID cursor for pagination
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          description: Results per page (max 100)
+          schema:
+            type: integer
+            default: 50
+            maximum: 100
+      responses:
+        '200':
+          description: Message history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      tags: [Messages]
+      summary: Send a message
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMessageRequest'
+      responses:
+        '200':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMessageResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/v1/conversations/{id}/read:
+    post:
+      tags: [Messages]
+      summary: Mark messages as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Conversation ID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkReadRequest'
+      responses:
+        '200':
+          description: Messages marked as read
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/unread:
+    get:
+      tags: [Messages]
+      summary: Get unread counts
+      responses:
+        '200':
+          description: Unread counts per conversation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UnreadSyncData'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/search/messages:
+    get:
+      tags: [Search]
+      summary: Search messages
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query (min 2 characters)
+          schema:
+            type: string
+            minLength: 2
+        - name: conversation_id
+          in: query
+          description: Limit to specific conversation
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          description: Results per page (max 50)
+          schema:
+            type: integer
+            default: 20
+            maximum: 50
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResult'
+        '400':
+          description: Invalid query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from authentication service
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+
+    DetailedHealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        version:
+          type: string
+          example: "1.0.0"
+        uptime_seconds:
+          type: integer
+          example: 3600
+        checks:
+          type: object
+          properties:
+            database:
+              $ref: '#/components/schemas/HealthCheck'
+            redis:
+              $ref: '#/components/schemas/HealthCheck'
+            connection_pool:
+              type: object
+              properties:
+                status:
+                  type: string
+                active:
+                  type: integer
+                max:
+                  type: integer
+
+    HealthCheck:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        latency_ms:
+          type: integer
+
+    ConversationType:
+      type: string
+      enum: [direct, group]
+
+    ContentType:
+      type: string
+      enum: [text, image, file, system]
+      default: text
+
+    PresenceStatus:
+      type: string
+      enum: [online, away, busy, offline]
+
+    ParticipantRole:
+      type: string
+      enum: [owner, admin, member]
+
+    ConversationSummary:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_type:
+          $ref: '#/components/schemas/ConversationType'
+        name:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        participant_count:
+          type: integer
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantInfo'
+        last_message:
+          $ref: '#/components/schemas/LastMessagePreview'
+          nullable: true
+        unread_count:
+          type: integer
+        updated_at:
+          type: integer
+          description: Unix timestamp in milliseconds
+
+    ParticipantInfo:
+      type: object
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          nullable: true
+        avatar_url:
+          type: string
+          nullable: true
+        role:
+          $ref: '#/components/schemas/ParticipantRole'
+
+    LastMessagePreview:
+      type: object
+      properties:
+        message_id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+          format: uuid
+        content_preview:
+          type: string
+        content_type:
+          $ref: '#/components/schemas/ContentType'
+        created_at:
+          type: integer
+          description: Unix timestamp in milliseconds
+
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+          format: uuid
+        content:
+          type: string
+        content_type:
+          $ref: '#/components/schemas/ContentType'
+        created_at:
+          type: integer
+          description: Unix timestamp in milliseconds
+        updated_at:
+          type: integer
+          nullable: true
+        reply_to_id:
+          type: string
+          format: uuid
+          nullable: true
+        mentions:
+          type: array
+          items:
+            type: string
+            format: uuid
+        reactions:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+              format: uuid
+        recalled_at:
+          type: integer
+          nullable: true
+
+    ConversationsResponse:
+      type: object
+      properties:
+        conversations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationSummary'
+        has_more:
+          type: boolean
+
+    MessagesResponse:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        has_more:
+          type: boolean
+
+    CreateConversationRequest:
+      type: object
+      required:
+        - conversation_type
+        - participants
+      properties:
+        conversation_type:
+          $ref: '#/components/schemas/ConversationType'
+        participants:
+          type: array
+          items:
+            type: string
+            format: uuid
+        name:
+          type: string
+          nullable: true
+
+    SendMessageRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+        content_type:
+          $ref: '#/components/schemas/ContentType'
+        reply_to:
+          type: string
+          format: uuid
+          nullable: true
+        mentions:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+        client_message_id:
+          type: string
+          description: Client-generated ID for deduplication
+
+    SendMessageResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        created_at:
+          type: integer
+        client_message_id:
+          type: string
+          nullable: true
+
+    MarkReadRequest:
+      type: object
+      required:
+        - message_id
+      properties:
+        message_id:
+          type: string
+          format: uuid
+
+    UnreadSyncData:
+      type: object
+      properties:
+        total:
+          type: integer
+        per_conversation:
+          type: object
+          additionalProperties:
+            type: integer
+
+    SearchResult:
+      type: object
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageSearchResult'
+        total_count:
+          type: integer
+
+    MessageSearchResult:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversation_id:
+          type: string
+          format: uuid
+        sender_id:
+          type: string
+          format: uuid
+        content_preview:
+          type: string
+        created_at:
+          type: integer
+        highlight:
+          type: string
+          nullable: true
+
+    ErrorResponse:
+      type: object
+      properties:
+        code:
+          type: string
+          example: INVALID_TOKEN
+        message:
+          type: string
+          example: Token validation failed
+
+  responses:
+    Unauthorized:
+      description: Authentication required or token invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: UNAUTHORIZED
+            message: Missing or invalid Authorization header
+
+    Forbidden:
+      description: User not authorized for this resource
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: NOT_PARTICIPANT
+            message: You are not a participant in this conversation
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: NOT_FOUND
+            message: Conversation not found
+
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: RATE_LIMITED
+            message: Rate limit exceeded. Retry after 60 seconds
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            code: INTERNAL_ERROR
+            message: An unexpected error occurred
