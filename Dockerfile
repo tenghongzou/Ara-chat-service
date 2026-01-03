@@ -1,0 +1,57 @@
+# Build stage
+FROM rust:1.92-slim AS builder
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    pkg-config \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy manifests first for layer caching
+COPY Cargo.toml Cargo.lock ./
+
+# Create minimal dummy source just to download dependencies
+RUN mkdir src && echo 'fn main() {}' > src/main.rs && \
+    cargo fetch && \
+    rm -rf src
+
+# Copy actual source code
+COPY src ./src
+
+# Build the actual application
+RUN cargo build --release
+
+# Runtime stage
+FROM debian:bookworm-slim AS runtime
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    libssl3 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser
+
+WORKDIR /app
+
+# Copy the binary from builder
+COPY --from=builder /app/target/release/ara-chat-service /app/chat-service
+
+# Create config directory
+RUN mkdir -p /app/config && chown -R appuser:appuser /app
+
+USER appuser
+
+# Expose WebSocket/HTTP port
+EXPOSE 8082
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8082/health || exit 1
+
+# Run the service
+ENTRYPOINT ["/app/chat-service"]

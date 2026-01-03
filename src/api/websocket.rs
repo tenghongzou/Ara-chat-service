@@ -1,0 +1,918 @@
+//! WebSocket handler
+
+use axum::{
+    extract::{
+        ws::{Message, WebSocket, WebSocketUpgrade},
+        Query, State,
+    },
+    response::IntoResponse,
+};
+use futures::{SinkExt, StreamExt};
+use serde::Deserialize;
+use tokio::sync::mpsc;
+use uuid::Uuid;
+
+use crate::auth::Claims;
+use crate::connection::Connection;
+use crate::message::{ClientMessage, OutboundMessage, ServerMessage};
+use crate::server::AppState;
+
+#[derive(Deserialize)]
+pub struct WsQuery {
+    token: String,
+}
+
+pub async fn websocket_handler(
+    ws: WebSocketUpgrade,
+    Query(query): Query<WsQuery>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    // Validate JWT token
+    let claims = match state.jwt_validator.validate(&query.token) {
+        Ok(claims) => claims,
+        Err(e) => {
+            tracing::warn!(error = %e, "WebSocket auth failed");
+            return ws.on_upgrade(|mut socket| async move {
+                let error = ServerMessage::error("AUTH_FAILED", "Invalid token");
+                let _ = socket.send(Message::Text(serde_json::to_string(&error).unwrap().into())).await;
+                let _ = socket.close().await;
+            });
+        }
+    };
+
+    ws.on_upgrade(move |socket| handle_socket(socket, claims, state))
+}
+
+async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
+    let user_id = match claims.user_id() {
+        Ok(id) => id,
+        Err(e) => {
+            tracing::warn!(error = %e, "Invalid user ID in claims");
+            return;
+        }
+    };
+
+    let tenant_id = claims.tenant_id();
+    let connection_id = Uuid::new_v4();
+
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+
+    // Create channel for outbound messages
+    let (tx, mut rx) = mpsc::unbounded_channel::<OutboundMessage>();
+
+    // Create and register connection
+    let connection = Connection::new(connection_id, user_id, tenant_id.clone(), tx);
+    if let Err(e) = state.connection_manager.register(connection) {
+        tracing::warn!(
+            user_id = %user_id,
+            error = %e,
+            "Failed to register connection"
+        );
+        let error = ServerMessage::error("CONNECTION_LIMIT", e.to_string());
+        let _ = ws_sender.send(Message::Text(serde_json::to_string(&error).unwrap().into())).await;
+        return;
+    }
+
+    tracing::info!(
+        connection_id = %connection_id,
+        user_id = %user_id,
+        "WebSocket connected"
+    );
+
+    // Send authentication confirmation
+    let auth_msg = ServerMessage::authenticated(user_id);
+    let _ = ws_sender.send(Message::Text(serde_json::to_string(&auth_msg).unwrap().into())).await;
+
+    // Register session in cluster
+    if let Some(ref session_store) = state.session_store {
+        let _ = session_store.register_session(user_id).await;
+    }
+
+    // Update presence
+    if let Some(ref presence) = state.presence_tracker {
+        let _ = presence.mark_online(user_id).await;
+    }
+
+    // Deliver queued offline messages
+    deliver_offline_messages(user_id, &state).await;
+
+    // Clone what we need for cleanup (before moving state)
+    let connection_manager = state.connection_manager.clone();
+    let session_store_cleanup = state.session_store.clone();
+    let presence_tracker_cleanup = state.presence_tracker.clone();
+    let presence_broadcaster_cleanup = state.presence_broadcaster.clone();
+
+    // Spawn task to forward outbound messages to WebSocket
+    let send_task = tokio::spawn(async move {
+        while let Some(msg) = rx.recv().await {
+            match msg.to_json() {
+                Ok(json) => {
+                    if ws_sender.send(Message::Text(json.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to serialize message");
+                }
+            }
+        }
+    });
+
+    // Handle incoming messages
+    let recv_task = tokio::spawn(async move {
+        while let Some(result) = ws_receiver.next().await {
+            match result {
+                Ok(Message::Text(text)) => {
+                    if let Ok(msg) = serde_json::from_str::<ClientMessage>(&text) {
+                        handle_client_message(user_id, msg, &state).await;
+                    }
+                }
+                Ok(Message::Close(_)) => break,
+                Err(e) => {
+                    tracing::debug!(error = %e, "WebSocket error");
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    // Wait for either task to complete
+    tokio::select! {
+        _ = send_task => {},
+        _ = recv_task => {},
+    }
+
+    // Cleanup
+    connection_manager.unregister(connection_id);
+
+    // Unregister session from cluster
+    if let Some(ref session_store) = session_store_cleanup {
+        let _ = session_store.unregister_session(user_id).await;
+    }
+
+    // Update presence and notify subscribers
+    if let Some(ref presence) = presence_tracker_cleanup {
+        let is_fully_offline = presence.mark_offline(user_id).await.unwrap_or(true);
+
+        if is_fully_offline {
+            // Clear all subscriptions and notify subscribers
+            let _ = presence.clear_subscriptions(user_id).await;
+
+            // Broadcast offline status to subscribers
+            if let Some(ref broadcaster) = presence_broadcaster_cleanup {
+                let _ = broadcaster.broadcast_to_subscribers(
+                    user_id,
+                    crate::message::PresenceStatus::Offline,
+                ).await;
+            }
+        }
+    }
+
+    tracing::info!(
+        connection_id = %connection_id,
+        user_id = %user_id,
+        "WebSocket disconnected"
+    );
+}
+
+async fn handle_client_message(user_id: Uuid, msg: ClientMessage, state: &AppState) {
+    match msg {
+        ClientMessage::Ping => {
+            let pong = ServerMessage::Pong;
+            state.connection_manager.send_to_user(&user_id, pong.into()).await;
+        }
+
+        ClientMessage::SendMessage {
+            conversation_id,
+            content,
+            content_type,
+            reply_to,
+            client_message_id,
+            mentions,
+        } => {
+            handle_send_message(
+                user_id,
+                conversation_id,
+                content,
+                content_type,
+                reply_to,
+                client_message_id,
+                mentions,
+                state,
+            ).await;
+        }
+
+        ClientMessage::MarkRead {
+            conversation_id,
+            message_id,
+        } => {
+            handle_mark_read(user_id, conversation_id, message_id, state).await;
+        }
+
+        ClientMessage::Typing {
+            conversation_id,
+            is_typing,
+        } => {
+            handle_typing(user_id, conversation_id, is_typing, state).await;
+        }
+
+        ClientMessage::FetchHistory {
+            conversation_id,
+            before,
+            limit,
+        } => {
+            handle_fetch_history(user_id, conversation_id, before, limit, state).await;
+        }
+
+        ClientMessage::FetchConversations { before, limit } => {
+            handle_fetch_conversations(user_id, before, limit, state).await;
+        }
+
+        ClientMessage::RecallMessage {
+            conversation_id,
+            message_id,
+        } => {
+            handle_recall_message(user_id, conversation_id, message_id, state).await;
+        }
+
+        ClientMessage::EditMessage {
+            conversation_id: _,
+            message_id,
+            new_content,
+        } => {
+            handle_edit_message(user_id, message_id, new_content, state).await;
+        }
+
+        ClientMessage::ToggleReaction {
+            conversation_id,
+            message_id,
+            emoji,
+        } => {
+            handle_toggle_reaction(user_id, conversation_id, message_id, emoji, state).await;
+        }
+
+        ClientMessage::CreateConversation {
+            conversation_type,
+            participants,
+            name,
+        } => {
+            handle_create_conversation(user_id, conversation_type, participants, name, state).await;
+        }
+
+        ClientMessage::UpdatePresence { status } => {
+            handle_update_presence(user_id, status, state).await;
+        }
+
+        ClientMessage::SubscribePresence { user_ids } => {
+            handle_subscribe_presence(user_id, user_ids, state).await;
+        }
+
+        ClientMessage::UnsubscribePresence { user_ids } => {
+            handle_unsubscribe_presence(user_id, user_ids, state).await;
+        }
+
+        ClientMessage::SyncUnread => {
+            handle_sync_unread(user_id, state).await;
+        }
+
+        ClientMessage::GetReactions { message_ids } => {
+            handle_get_reactions(user_id, message_ids, state).await;
+        }
+
+        ClientMessage::Authenticate { .. } => {
+            // Already authenticated via query param
+            tracing::debug!(user_id = %user_id, "Re-auth attempted on authenticated connection");
+        }
+    }
+}
+
+async fn handle_send_message(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    content: String,
+    content_type: crate::message::ContentType,
+    reply_to: Option<Uuid>,
+    client_message_id: Option<String>,
+    mentions: Vec<Uuid>,
+    state: &AppState,
+) {
+    // Check rate limit before processing
+    match state.rate_limiter.check_user_rate(user_id).await {
+        Ok(result) => {
+            if !result.allowed {
+                let retry_after = result.retry_after.map(|d| d.as_secs()).unwrap_or(60);
+                send_error(
+                    user_id,
+                    "RATE_LIMITED",
+                    format!("Rate limit exceeded. Retry after {} seconds", retry_after),
+                    state,
+                ).await;
+                return;
+            }
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Rate limit check failed, allowing message");
+            // Continue on error - fail open
+        }
+    }
+
+    let handler = match &state.message_handler {
+        Some(h) => h,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match handler
+        .handle_send_message(
+            user_id,
+            conversation_id,
+            content,
+            content_type,
+            reply_to,
+            client_message_id.clone(),
+            mentions,
+        )
+        .await
+    {
+        Ok(message) => {
+            // Send confirmation to sender
+            let confirmation = ServerMessage::MessageSent {
+                conversation_id,
+                message_id: message.id,
+                client_message_id,
+                created_at: message.created_at,
+            };
+            state.connection_manager.send_to_user(&user_id, confirmation.into()).await;
+
+            // Increment unread counts for other participants
+            if let Some(ref conv_service) = state.conversation_service {
+                if let Ok(participants) = conv_service.get_participant_ids(conversation_id).await {
+                    if let Some(ref receipt_tracker) = state.receipt_tracker {
+                        for participant_id in participants {
+                            if participant_id != user_id {
+                                let _ = receipt_tracker.increment_unread(participant_id, conversation_id).await;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(user_id = %user_id, error = %e, "Failed to send message");
+            send_error(user_id, "SEND_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+async fn handle_mark_read(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    message_id: Uuid,
+    state: &AppState,
+) {
+    let tracker = match &state.receipt_tracker {
+        Some(t) => t,
+        None => return,
+    };
+
+    match tracker.mark_read(conversation_id, user_id, message_id).await {
+        Ok(result) => {
+            // Broadcast read receipt to other participants (across cluster)
+            if let Some(ref conv_service) = state.conversation_service {
+                if let Ok(participants) = conv_service.get_participant_ids(conversation_id).await {
+                    let receipt = ServerMessage::ReadReceipt {
+                        conversation_id,
+                        user_id,
+                        message_id,
+                        read_at: result.read_at,
+                    };
+
+                    // Pre-serialize for efficient multi-send
+                    let outbound = match OutboundMessage::preserialized(&receipt) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            tracing::error!(error = %e, "Failed to serialize read receipt");
+                            return;
+                        }
+                    };
+
+                    for participant_id in participants {
+                        if participant_id != user_id {
+                            // Try local delivery first
+                            if state.connection_manager.has_user(&participant_id) {
+                                state.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+                            } else if let Some(ref cluster_router) = state.cluster_router {
+                                // Route through cluster (with offline queue for important messages)
+                                let _ = cluster_router.route_to_user_with_queue(
+                                    participant_id,
+                                    outbound.clone(),
+                                    receipt.clone(),
+                                ).await;
+                            }
+                        }
+                    }
+                }
+            }
+
+            tracing::debug!(
+                user_id = %user_id,
+                conversation_id = %conversation_id,
+                message_id = %message_id,
+                "Messages marked as read"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to mark as read");
+        }
+    }
+}
+
+async fn handle_typing(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    is_typing: bool,
+    state: &AppState,
+) {
+    // Update typing status in Redis cache
+    if let Some(ref cache) = state.redis_cache {
+        let _ = cache.set_typing(conversation_id, user_id, is_typing).await;
+    }
+
+    // Broadcast to other participants (across cluster, but no offline queue - typing is ephemeral)
+    if let Some(ref conv_service) = state.conversation_service {
+        if let Ok(participants) = conv_service.get_participant_ids(conversation_id).await {
+            let typing_msg = ServerMessage::Typing {
+                conversation_id,
+                user_id,
+                is_typing,
+            };
+
+            // Pre-serialize for efficient multi-send
+            let outbound = match OutboundMessage::preserialized(&typing_msg) {
+                Ok(o) => o,
+                Err(_) => return,
+            };
+
+            for participant_id in participants {
+                if participant_id != user_id {
+                    // Try local delivery first
+                    if state.connection_manager.has_user(&participant_id) {
+                        state.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+                    } else if let Some(ref cluster_router) = state.cluster_router {
+                        // Route through cluster without offline queue (typing is ephemeral)
+                        let _ = cluster_router.route_to_user(participant_id, outbound.clone()).await;
+                    }
+                }
+            }
+        }
+    }
+}
+
+async fn handle_fetch_history(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    before: Option<Uuid>,
+    limit: Option<u32>,
+    state: &AppState,
+) {
+    // Verify user is a participant
+    if let Some(ref conv_service) = state.conversation_service {
+        match conv_service.is_participant(conversation_id, user_id).await {
+            Ok(false) => {
+                send_error(user_id, "NOT_PARTICIPANT", "You are not a participant".to_string(), state).await;
+                return;
+            }
+            Err(e) => {
+                send_error(user_id, "FETCH_FAILED", e.to_string(), state).await;
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    let storage = match &state.message_storage {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    let limit = limit.unwrap_or(50).min(100);
+
+    match storage.get_history(conversation_id, before, limit).await {
+        Ok((messages, has_more)) => {
+            let history = ServerMessage::History {
+                conversation_id,
+                messages,
+                has_more,
+            };
+            state.connection_manager.send_to_user(&user_id, history.into()).await;
+        }
+        Err(e) => {
+            tracing::error!(user_id = %user_id, error = %e, "Failed to fetch history");
+            send_error(user_id, "FETCH_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+async fn handle_fetch_conversations(
+    user_id: Uuid,
+    before: Option<i64>,
+    limit: Option<u32>,
+    state: &AppState,
+) {
+    let conv_service = match &state.conversation_service {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Conversation service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    let limit = limit.unwrap_or(20).min(50);
+
+    match conv_service.get_user_conversations(user_id, before, limit).await {
+        Ok((mut conversations, has_more)) => {
+            // Update unread counts from Redis
+            for conv in &mut conversations {
+                if let Some(ref tracker) = state.receipt_tracker {
+                    conv.unread_count = tracker.get_unread_count(user_id, conv.id).await.unwrap_or(0);
+                }
+            }
+
+            let response = ServerMessage::Conversations {
+                conversations,
+                has_more,
+            };
+            state.connection_manager.send_to_user(&user_id, response.into()).await;
+        }
+        Err(e) => {
+            tracing::error!(user_id = %user_id, error = %e, "Failed to fetch conversations");
+            send_error(user_id, "FETCH_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+async fn handle_recall_message(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    message_id: Uuid,
+    state: &AppState,
+) {
+    let handler = match &state.message_handler {
+        Some(h) => h,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match handler.handle_recall_message(user_id, conversation_id, message_id).await {
+        Ok(()) => {
+            tracing::info!(
+                user_id = %user_id,
+                message_id = %message_id,
+                "Message recalled"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to recall message");
+            send_error(user_id, "RECALL_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+async fn handle_edit_message(
+    user_id: Uuid,
+    message_id: Uuid,
+    new_content: String,
+    state: &AppState,
+) {
+    let handler = match &state.message_handler {
+        Some(h) => h,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match handler.handle_edit_message(user_id, message_id, new_content).await {
+        Ok(message) => {
+            // Send confirmation to sender
+            let confirmation = ServerMessage::MessageEdited {
+                conversation_id: message.conversation_id,
+                message_id: message.id,
+                new_content: message.content,
+                edited_at: message.updated_at.unwrap_or(message.created_at),
+                mentions: message.mentions,
+            };
+            state.connection_manager.send_to_user(&user_id, confirmation.into()).await;
+
+            tracing::info!(
+                user_id = %user_id,
+                message_id = %message_id,
+                "Message edited"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to edit message");
+            send_error(user_id, "EDIT_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+async fn handle_toggle_reaction(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    message_id: Uuid,
+    emoji: String,
+    state: &AppState,
+) {
+    let reaction_service = match &state.reaction_service {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Reaction service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match reaction_service.toggle_reaction(message_id, user_id, &emoji).await {
+        Ok(action) => {
+            // Broadcast reaction update to conversation participants (across cluster)
+            if let Some(ref conv_service) = state.conversation_service {
+                if let Ok(participants) = conv_service.get_participant_ids(conversation_id).await {
+                    let update = ServerMessage::ReactionUpdate {
+                        conversation_id,
+                        message_id,
+                        user_id,
+                        emoji: emoji.clone(),
+                        action,
+                    };
+
+                    // Pre-serialize for efficient multi-send
+                    let outbound = match OutboundMessage::preserialized(&update) {
+                        Ok(o) => o,
+                        Err(e) => {
+                            tracing::error!(error = %e, "Failed to serialize reaction update");
+                            return;
+                        }
+                    };
+
+                    for participant_id in participants {
+                        // Try local delivery first
+                        if state.connection_manager.has_user(&participant_id) {
+                            state.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+                        } else if let Some(ref cluster_router) = state.cluster_router {
+                            // Route through cluster with offline queue
+                            let _ = cluster_router.route_to_user_with_queue(
+                                participant_id,
+                                outbound.clone(),
+                                update.clone(),
+                            ).await;
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to toggle reaction");
+            send_error(user_id, "REACTION_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+async fn handle_create_conversation(
+    user_id: Uuid,
+    conversation_type: crate::message::ConversationType,
+    participants: Vec<Uuid>,
+    name: Option<String>,
+    state: &AppState,
+) {
+    let conv_service = match &state.conversation_service {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Conversation service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    // Ensure creator is in participants
+    let mut all_participants = participants;
+    if !all_participants.contains(&user_id) {
+        all_participants.push(user_id);
+    }
+
+    match conv_service.create_conversation(conversation_type.clone(), user_id, all_participants, name).await {
+        Ok(conversation) => {
+            let updated_at = conversation.last_message_at
+                .map(|dt| dt.timestamp_millis())
+                .unwrap_or_else(|| conversation.created_at.timestamp_millis());
+
+            let summary = crate::message::ConversationSummary {
+                id: conversation.id,
+                conversation_type,
+                name: conversation.name,
+                avatar_url: conversation.avatar_url,
+                participant_count: conversation.participant_count,
+                participants: vec![],
+                last_message: None,
+                unread_count: 0,
+                updated_at,
+            };
+
+            let response = ServerMessage::ConversationCreated { conversation: summary };
+            state.connection_manager.send_to_user(&user_id, response.into()).await;
+        }
+        Err(e) => {
+            tracing::error!(user_id = %user_id, error = %e, "Failed to create conversation");
+            send_error(user_id, "CREATE_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+async fn handle_update_presence(
+    user_id: Uuid,
+    status: crate::message::PresenceStatus,
+    state: &AppState,
+) {
+    if let Some(ref tracker) = state.presence_tracker {
+        if let Err(e) = tracker.update_presence(user_id, status.clone()).await {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to update presence");
+            return;
+        }
+
+        // Broadcast status change to subscribers
+        if let Some(ref broadcaster) = state.presence_broadcaster {
+            let _ = broadcaster.broadcast_to_subscribers(user_id, status).await;
+        }
+    }
+}
+
+async fn handle_subscribe_presence(
+    user_id: Uuid,
+    target_user_ids: Vec<Uuid>,
+    state: &AppState,
+) {
+    // Limit subscriptions to prevent abuse
+    let target_user_ids: Vec<Uuid> = target_user_ids.into_iter().take(100).collect();
+
+    if target_user_ids.is_empty() {
+        return;
+    }
+
+    if let Some(ref tracker) = state.presence_tracker {
+        if let Err(e) = tracker.subscribe(user_id, &target_user_ids).await {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to subscribe to presence");
+            send_error(user_id, "SUBSCRIBE_FAILED", e.to_string(), state).await;
+            return;
+        }
+
+        // Send initial presence status for subscribed users
+        if let Some(ref broadcaster) = state.presence_broadcaster {
+            let _ = broadcaster.send_initial_presence(user_id, &target_user_ids).await;
+        }
+
+        tracing::debug!(
+            user_id = %user_id,
+            target_count = target_user_ids.len(),
+            "Subscribed to presence updates"
+        );
+    }
+}
+
+async fn handle_unsubscribe_presence(
+    user_id: Uuid,
+    target_user_ids: Vec<Uuid>,
+    state: &AppState,
+) {
+    if target_user_ids.is_empty() {
+        return;
+    }
+
+    if let Some(ref tracker) = state.presence_tracker {
+        if let Err(e) = tracker.unsubscribe(user_id, &target_user_ids).await {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to unsubscribe from presence");
+        }
+
+        tracing::debug!(
+            user_id = %user_id,
+            target_count = target_user_ids.len(),
+            "Unsubscribed from presence updates"
+        );
+    }
+}
+
+async fn send_error(user_id: Uuid, code: &str, message: String, state: &AppState) {
+    let error = ServerMessage::error(code, message);
+    state.connection_manager.send_to_user(&user_id, error.into()).await;
+}
+
+/// Deliver queued offline messages to a newly connected user
+async fn deliver_offline_messages(user_id: Uuid, state: &AppState) {
+    match state.offline_queue.drain_messages(user_id).await {
+        Ok(messages) => {
+            if messages.is_empty() {
+                return;
+            }
+
+            tracing::info!(
+                user_id = %user_id,
+                count = messages.len(),
+                "Delivering offline messages"
+            );
+
+            for queued in messages {
+                let outbound: OutboundMessage = queued.message.into();
+                state.connection_manager.send_to_user(&user_id, outbound).await;
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                user_id = %user_id,
+                error = %e,
+                "Failed to retrieve offline messages"
+            );
+        }
+    }
+}
+
+/// Handle sync unread request - returns all unread counts for the user
+async fn handle_sync_unread(user_id: Uuid, state: &AppState) {
+    if let Some(ref cache) = state.redis_cache {
+        match cache.get_unread_sync(user_id).await {
+            Ok((total, per_conversation)) => {
+                let response = ServerMessage::UnreadSync {
+                    total,
+                    per_conversation,
+                };
+                state.connection_manager.send_to_user(&user_id, response.into()).await;
+            }
+            Err(e) => {
+                tracing::warn!(user_id = %user_id, error = %e, "Failed to sync unread counts");
+                send_error(user_id, "SYNC_FAILED", e.to_string(), state).await;
+            }
+        }
+    } else {
+        // No Redis cache available, return empty counts
+        let response = ServerMessage::UnreadSync {
+            total: 0,
+            per_conversation: std::collections::HashMap::new(),
+        };
+        state.connection_manager.send_to_user(&user_id, response.into()).await;
+    }
+}
+
+/// Handle get reactions request - returns reactions for specified messages
+async fn handle_get_reactions(
+    user_id: Uuid,
+    message_ids: Vec<Uuid>,
+    state: &AppState,
+) {
+    let reaction_service = match &state.reaction_service {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Reaction service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    // Limit the number of messages to prevent abuse
+    let message_ids: Vec<Uuid> = message_ids.into_iter().take(100).collect();
+
+    match reaction_service.get_reactions_batch(&message_ids).await {
+        Ok(batch_reactions) => {
+            // Convert to ReactionInfo format
+            let mut reactions_map: std::collections::HashMap<Uuid, Vec<crate::message::ReactionInfo>> =
+                std::collections::HashMap::new();
+
+            for (msg_id, emoji_reactions) in batch_reactions {
+                let reaction_infos: Vec<crate::message::ReactionInfo> = emoji_reactions
+                    .into_iter()
+                    .map(|(emoji, users)| {
+                        let user_reacted = users.contains(&user_id);
+                        crate::message::ReactionInfo {
+                            emoji,
+                            count: users.len() as u32,
+                            users,
+                            user_reacted,
+                        }
+                    })
+                    .collect();
+                reactions_map.insert(msg_id, reaction_infos);
+            }
+
+            let response = ServerMessage::Reactions {
+                reactions: reactions_map,
+            };
+            state.connection_manager.send_to_user(&user_id, response.into()).await;
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to get reactions");
+            send_error(user_id, "FETCH_FAILED", e.to_string(), state).await;
+        }
+    }
+}

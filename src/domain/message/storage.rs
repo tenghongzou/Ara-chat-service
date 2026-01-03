@@ -1,0 +1,511 @@
+//! Message storage - persistence layer for chat messages
+
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use sqlx::{FromRow, PgPool, Row};
+use uuid::Uuid;
+
+use super::types::{ChatMessage, ContentType};
+
+/// Message row from database
+#[derive(Debug, FromRow)]
+struct MessageRow {
+    id: Uuid,
+    conversation_id: Uuid,
+    sender_id: Uuid,
+    content: String,
+    content_type: String,
+    created_at: DateTime<Utc>,
+    updated_at: Option<DateTime<Utc>>,
+    deleted_at: Option<DateTime<Utc>>,
+    reply_to_id: Option<Uuid>,
+    mentions: Vec<Uuid>,
+    client_message_id: Option<String>,
+}
+
+impl MessageRow {
+    fn into_chat_message(self) -> ChatMessage {
+        ChatMessage {
+            id: self.id,
+            conversation_id: self.conversation_id,
+            sender_id: self.sender_id,
+            content: self.content,
+            content_type: match self.content_type.as_str() {
+                "image" => ContentType::Image,
+                "file" => ContentType::File,
+                "system" => ContentType::System,
+                _ => ContentType::Text,
+            },
+            created_at: self.created_at.timestamp_millis(),
+            updated_at: self.updated_at.map(|t| t.timestamp_millis()),
+            reply_to_id: self.reply_to_id,
+            mentions: self.mentions,
+            reactions: Default::default(), // Loaded separately
+            recalled_at: self.deleted_at.map(|t| t.timestamp_millis()),
+        }
+    }
+}
+
+/// Message storage backend
+pub struct MessageStorage {
+    pool: Arc<PgPool>,
+    tenant_id: String,
+}
+
+impl MessageStorage {
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self {
+            pool,
+            tenant_id: "default".to_string(),
+        }
+    }
+
+    pub fn with_tenant(pool: Arc<PgPool>, tenant_id: String) -> Self {
+        Self { pool, tenant_id }
+    }
+
+    /// Create a new message
+    pub async fn create_message(
+        &self,
+        conversation_id: Uuid,
+        sender_id: Uuid,
+        content: String,
+        content_type: ContentType,
+        reply_to: Option<Uuid>,
+        client_message_id: Option<String>,
+        mentions: Vec<Uuid>,
+    ) -> Result<ChatMessage, StorageError> {
+        let id = Uuid::new_v4();
+        let content_type_str = match content_type {
+            ContentType::Text => "text",
+            ContentType::Image => "image",
+            ContentType::File => "file",
+            ContentType::System => "system",
+        };
+
+        let row = sqlx::query_as::<_, MessageRow>(
+            r#"
+            INSERT INTO messages (
+                id, conversation_id, sender_id, tenant_id,
+                content, content_type, reply_to_id, mentions, client_message_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING
+                id, conversation_id, sender_id, content, content_type,
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+            "#,
+        )
+        .bind(id)
+        .bind(conversation_id)
+        .bind(sender_id)
+        .bind(&self.tenant_id)
+        .bind(&content)
+        .bind(content_type_str)
+        .bind(reply_to)
+        .bind(&mentions)
+        .bind(&client_message_id)
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        // Update conversation's last_message
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET last_message_id = $1, last_message_at = NOW(), updated_at = NOW()
+            WHERE id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(conversation_id)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.into_chat_message())
+    }
+
+    /// Get a message by ID
+    pub async fn get_message(&self, message_id: Uuid) -> Result<Option<ChatMessage>, StorageError> {
+        let row = sqlx::query_as::<_, MessageRow>(
+            r#"
+            SELECT
+                id, conversation_id, sender_id, content, content_type,
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+            FROM messages
+            WHERE id = $1 AND tenant_id = $2
+            "#,
+        )
+        .bind(message_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.map(|r| r.into_chat_message()))
+    }
+
+    /// Mark a message as recalled (soft delete)
+    pub async fn recall_message(&self, message_id: Uuid) -> Result<(), StorageError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE messages
+            SET deleted_at = NOW(), content = '[Message recalled]', updated_at = NOW()
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(message_id)
+        .bind(&self.tenant_id)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::NotFound);
+        }
+
+        Ok(())
+    }
+
+    /// Get message history for a conversation with cursor-based pagination
+    pub async fn get_history(
+        &self,
+        conversation_id: Uuid,
+        before: Option<Uuid>,
+        limit: u32,
+    ) -> Result<(Vec<ChatMessage>, bool), StorageError> {
+        let limit = limit.min(100) as i64;
+
+        let messages = if let Some(before_id) = before {
+            // Get the created_at of the cursor message
+            let cursor_time: Option<DateTime<Utc>> = sqlx::query_scalar(
+                "SELECT created_at FROM messages WHERE id = $1"
+            )
+            .bind(before_id)
+            .fetch_optional(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            let cursor_time = cursor_time.ok_or(StorageError::InvalidCursor)?;
+
+            sqlx::query_as::<_, MessageRow>(
+                r#"
+                SELECT
+                    id, conversation_id, sender_id, content, content_type,
+                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                FROM messages
+                WHERE conversation_id = $1
+                    AND tenant_id = $2
+                    AND created_at < $3
+                ORDER BY created_at DESC
+                LIMIT $4
+                "#,
+            )
+            .bind(conversation_id)
+            .bind(&self.tenant_id)
+            .bind(cursor_time)
+            .bind(limit + 1) // Fetch one extra to check has_more
+            .fetch_all(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?
+        } else {
+            sqlx::query_as::<_, MessageRow>(
+                r#"
+                SELECT
+                    id, conversation_id, sender_id, content, content_type,
+                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                FROM messages
+                WHERE conversation_id = $1 AND tenant_id = $2
+                ORDER BY created_at DESC
+                LIMIT $3
+                "#,
+            )
+            .bind(conversation_id)
+            .bind(&self.tenant_id)
+            .bind(limit + 1)
+            .fetch_all(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?
+        };
+
+        let has_more = messages.len() > limit as usize;
+        let messages: Vec<ChatMessage> = messages
+            .into_iter()
+            .take(limit as usize)
+            .map(|r| r.into_chat_message())
+            .collect();
+
+        Ok((messages, has_more))
+    }
+
+    /// Get messages by IDs (for batch loading)
+    pub async fn get_messages_by_ids(&self, message_ids: &[Uuid]) -> Result<Vec<ChatMessage>, StorageError> {
+        if message_ids.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let rows = sqlx::query_as::<_, MessageRow>(
+            r#"
+            SELECT
+                id, conversation_id, sender_id, content, content_type,
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+            FROM messages
+            WHERE id = ANY($1) AND tenant_id = $2
+            "#,
+        )
+        .bind(message_ids)
+        .bind(&self.tenant_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|r| r.into_chat_message()).collect())
+    }
+
+    /// Check for duplicate message by client_message_id
+    pub async fn find_by_client_id(
+        &self,
+        sender_id: Uuid,
+        client_message_id: &str,
+    ) -> Result<Option<ChatMessage>, StorageError> {
+        let row = sqlx::query_as::<_, MessageRow>(
+            r#"
+            SELECT
+                id, conversation_id, sender_id, content, content_type,
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+            FROM messages
+            WHERE sender_id = $1 AND client_message_id = $2 AND tenant_id = $3
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(sender_id)
+        .bind(client_message_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.map(|r| r.into_chat_message()))
+    }
+
+    /// Edit a message's content and mentions
+    pub async fn edit_message(
+        &self,
+        message_id: Uuid,
+        new_content: String,
+        new_mentions: Vec<Uuid>,
+    ) -> Result<ChatMessage, StorageError> {
+        let now = Utc::now();
+
+        let row = sqlx::query_as::<_, MessageRow>(
+            r#"
+            UPDATE messages
+            SET content = $1, mentions = $2, updated_at = $3
+            WHERE id = $4 AND tenant_id = $5 AND deleted_at IS NULL
+            RETURNING
+                id, conversation_id, sender_id, content, content_type,
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+            "#,
+        )
+        .bind(&new_content)
+        .bind(&new_mentions)
+        .bind(now)
+        .bind(message_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        row.map(|r| r.into_chat_message())
+            .ok_or(StorageError::NotFound)
+    }
+
+    /// Search messages using PostgreSQL full-text search
+    /// Returns messages only from conversations the user participates in
+    pub async fn search_messages(
+        &self,
+        user_id: Uuid,
+        search_term: &str,
+        conversation_id: Option<Uuid>,
+        limit: u32,
+    ) -> Result<(Vec<MessageSearchResult>, u64), StorageError> {
+        let limit = limit.min(50) as i64;
+
+        // Escape special characters for tsquery
+        let search_query = search_term
+            .split_whitespace()
+            .map(|w| format!("{}:*", w.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(" & ");
+
+        let (messages, total) = if let Some(conv_id) = conversation_id {
+            // Search within a specific conversation
+            let rows = sqlx::query_as::<_, MessageSearchRow>(
+                r#"
+                SELECT
+                    m.id,
+                    m.conversation_id,
+                    m.sender_id,
+                    m.content,
+                    m.created_at,
+                    ts_headline('english', m.content, to_tsquery('english', $1),
+                        'StartSel=<mark>, StopSel=</mark>, MaxWords=35, MinWords=15'
+                    ) as highlight
+                FROM messages m
+                INNER JOIN conversation_participants cp
+                    ON m.conversation_id = cp.conversation_id
+                WHERE cp.user_id = $2
+                    AND cp.left_at IS NULL
+                    AND m.conversation_id = $3
+                    AND m.tenant_id = $4
+                    AND m.deleted_at IS NULL
+                    AND to_tsvector('english', m.content) @@ to_tsquery('english', $1)
+                ORDER BY m.created_at DESC
+                LIMIT $5
+                "#,
+            )
+            .bind(&search_query)
+            .bind(user_id)
+            .bind(conv_id)
+            .bind(&self.tenant_id)
+            .bind(limit)
+            .fetch_all(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            // Get total count
+            let count: (i64,) = sqlx::query_as(
+                r#"
+                SELECT COUNT(*)
+                FROM messages m
+                INNER JOIN conversation_participants cp
+                    ON m.conversation_id = cp.conversation_id
+                WHERE cp.user_id = $1
+                    AND cp.left_at IS NULL
+                    AND m.conversation_id = $2
+                    AND m.tenant_id = $3
+                    AND m.deleted_at IS NULL
+                    AND to_tsvector('english', m.content) @@ to_tsquery('english', $4)
+                "#,
+            )
+            .bind(user_id)
+            .bind(conv_id)
+            .bind(&self.tenant_id)
+            .bind(&search_query)
+            .fetch_one(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            (rows, count.0 as u64)
+        } else {
+            // Search across all user's conversations
+            let rows = sqlx::query_as::<_, MessageSearchRow>(
+                r#"
+                SELECT DISTINCT ON (m.id)
+                    m.id,
+                    m.conversation_id,
+                    m.sender_id,
+                    m.content,
+                    m.created_at,
+                    ts_headline('english', m.content, to_tsquery('english', $1),
+                        'StartSel=<mark>, StopSel=</mark>, MaxWords=35, MinWords=15'
+                    ) as highlight
+                FROM messages m
+                INNER JOIN conversation_participants cp
+                    ON m.conversation_id = cp.conversation_id
+                WHERE cp.user_id = $2
+                    AND cp.left_at IS NULL
+                    AND m.tenant_id = $3
+                    AND m.deleted_at IS NULL
+                    AND to_tsvector('english', m.content) @@ to_tsquery('english', $1)
+                ORDER BY m.id, m.created_at DESC
+                LIMIT $4
+                "#,
+            )
+            .bind(&search_query)
+            .bind(user_id)
+            .bind(&self.tenant_id)
+            .bind(limit)
+            .fetch_all(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            // Get total count
+            let count: (i64,) = sqlx::query_as(
+                r#"
+                SELECT COUNT(DISTINCT m.id)
+                FROM messages m
+                INNER JOIN conversation_participants cp
+                    ON m.conversation_id = cp.conversation_id
+                WHERE cp.user_id = $1
+                    AND cp.left_at IS NULL
+                    AND m.tenant_id = $2
+                    AND m.deleted_at IS NULL
+                    AND to_tsvector('english', m.content) @@ to_tsquery('english', $3)
+                "#,
+            )
+            .bind(user_id)
+            .bind(&self.tenant_id)
+            .bind(&search_query)
+            .fetch_one(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?;
+
+            (rows, count.0 as u64)
+        };
+
+        let results = messages
+            .into_iter()
+            .map(|r| MessageSearchResult {
+                id: r.id,
+                conversation_id: r.conversation_id,
+                sender_id: r.sender_id,
+                content: r.content,
+                created_at: r.created_at.timestamp_millis(),
+                highlight: r.highlight,
+            })
+            .collect();
+
+        Ok((results, total))
+    }
+}
+
+/// Search result row from database
+#[derive(Debug, FromRow)]
+struct MessageSearchRow {
+    id: Uuid,
+    conversation_id: Uuid,
+    sender_id: Uuid,
+    content: String,
+    created_at: DateTime<Utc>,
+    highlight: Option<String>,
+}
+
+/// Message search result
+#[derive(Debug)]
+pub struct MessageSearchResult {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    pub sender_id: Uuid,
+    pub content: String,
+    pub created_at: i64,
+    pub highlight: Option<String>,
+}
+
+/// Storage errors
+#[derive(Debug, thiserror::Error)]
+pub enum StorageError {
+    #[error("Database error: {0}")]
+    Database(String),
+
+    #[error("Message not found")]
+    NotFound,
+
+    #[error("Invalid cursor")]
+    InvalidCursor,
+
+    #[error("Serialization error: {0}")]
+    Serialization(String),
+}

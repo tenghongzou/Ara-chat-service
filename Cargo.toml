@@ -1,0 +1,84 @@
+[package]
+name = "ara-chat-service"
+version = "1.0.0"
+edition = "2021"
+authors = ["Ara Team"]
+description = "Real-time chat service with WebSocket support for instant messaging"
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# JWT
+jsonwebtoken = "9"
+
+# Redis
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
+# PostgreSQL
+sqlx = { version = "0.8", features = ["runtime-tokio", "postgres", "uuid", "chrono", "json"] }
+
+# Concurrent data structures
+dashmap = "6"
+smallvec = "1.13"
+
+# Async utilities
+futures = "0.3"
+tokio-stream = "0.1"
+async-stream = "0.3"
+async-trait = "0.1"
+
+# Logging & Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# OpenTelemetry
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["tonic"] }
+opentelemetry-semantic-conventions = "0.27"
+tracing-opentelemetry = "0.28"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Configuration
+config = "0.14"
+dotenvy = "0.15"
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Random (for jitter in backoff)
+rand = "0.8"
+
+# Prometheus metrics
+prometheus = "0.13"
+lazy_static = "1.5"
+
+# SHA256 for direct message lookup hash
+sha2 = "0.10"
+
+# CRC16 for Redis Cluster slot calculation
+crc16 = "0.4"
+
+# Regex for mention parsing (lightweight)
+regex-lite = "0.1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[profile.release]
+lto = true
+codegen-units = 1
