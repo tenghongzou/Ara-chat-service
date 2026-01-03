@@ -76,6 +76,9 @@ crc16 = "0.4"
 # Regex for mention parsing (lightweight)
 regex-lite = "0.1"
 
+# Security - input sanitization
+html-escape = "0.2"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

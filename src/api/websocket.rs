@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use crate::auth::Claims;
 use crate::connection::Connection;
+use crate::domain::validation::{limits, sanitize_message_content, sanitize_conversation_name};
 use crate::message::{ClientMessage, OutboundMessage, ServerMessage};
 use crate::server::AppState;
 
@@ -311,6 +312,35 @@ async fn handle_send_message(
         "Processing SendMessage"
     );
 
+    // Validate content length
+    if content.is_empty() {
+        send_error(user_id, "EMPTY_CONTENT", "Message content cannot be empty".to_string(), state).await;
+        return;
+    }
+    if content.len() > limits::MAX_MESSAGE_LENGTH {
+        send_error(
+            user_id,
+            "CONTENT_TOO_LONG",
+            format!("Message exceeds {} characters", limits::MAX_MESSAGE_LENGTH),
+            state,
+        ).await;
+        return;
+    }
+
+    // Validate mentions count
+    if mentions.len() > limits::MAX_MENTIONS_PER_MESSAGE {
+        send_error(
+            user_id,
+            "TOO_MANY_MENTIONS",
+            format!("Max {} mentions allowed", limits::MAX_MENTIONS_PER_MESSAGE),
+            state,
+        ).await;
+        return;
+    }
+
+    // Sanitize content for XSS prevention
+    let content = sanitize_message_content(&content);
+
     // Check rate limit before processing
     match state.rate_limiter.check_user_rate(user_id).await {
         Ok(result) => {
@@ -606,6 +636,24 @@ async fn handle_edit_message(
     new_content: String,
     state: &AppState,
 ) {
+    // Validate content length
+    if new_content.is_empty() {
+        send_error(user_id, "EMPTY_CONTENT", "Message content cannot be empty".to_string(), state).await;
+        return;
+    }
+    if new_content.len() > limits::MAX_MESSAGE_LENGTH {
+        send_error(
+            user_id,
+            "CONTENT_TOO_LONG",
+            format!("Message exceeds {} characters", limits::MAX_MESSAGE_LENGTH),
+            state,
+        ).await;
+        return;
+    }
+
+    // Sanitize content for XSS prevention
+    let new_content = sanitize_message_content(&new_content);
+
     let handler = match &state.message_handler {
         Some(h) => h,
         None => {
@@ -646,6 +694,17 @@ async fn handle_toggle_reaction(
     emoji: String,
     state: &AppState,
 ) {
+    // Validate emoji
+    if emoji.is_empty() || emoji.len() > limits::MAX_EMOJI_LENGTH {
+        send_error(
+            user_id,
+            "INVALID_EMOJI",
+            format!("Emoji must be 1-{} characters", limits::MAX_EMOJI_LENGTH),
+            state,
+        ).await;
+        return;
+    }
+
     let reaction_service = match &state.reaction_service {
         Some(s) => s,
         None => {
@@ -706,6 +765,33 @@ async fn handle_create_conversation(
     name: Option<String>,
     state: &AppState,
 ) {
+    // Validate name length
+    if let Some(ref n) = name {
+        if n.len() > limits::MAX_CONVERSATION_NAME_LENGTH {
+            send_error(
+                user_id,
+                "NAME_TOO_LONG",
+                format!("Conversation name exceeds {} characters", limits::MAX_CONVERSATION_NAME_LENGTH),
+                state,
+            ).await;
+            return;
+        }
+    }
+
+    // Validate participant count
+    if participants.len() > limits::MAX_PARTICIPANTS_PER_CONVERSATION {
+        send_error(
+            user_id,
+            "TOO_MANY_PARTICIPANTS",
+            format!("Max {} participants allowed", limits::MAX_PARTICIPANTS_PER_CONVERSATION),
+            state,
+        ).await;
+        return;
+    }
+
+    // Sanitize conversation name
+    let name = name.map(|n| sanitize_conversation_name(&n));
+
     let conv_service = match &state.conversation_service {
         Some(s) => s,
         None => {

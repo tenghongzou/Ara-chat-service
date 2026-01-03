@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use sqlx::PgPool;
 
-use crate::auth::JwtValidator;
+use crate::auth::{JwtError, JwtValidator};
 use crate::circuit_breaker::CircuitBreakers;
 use crate::cluster::{ClusterRouter, MemorySessionStore, RedisSessionStore, SessionStore};
 use crate::config::Settings;
@@ -44,8 +44,8 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(settings: Settings) -> Self {
-        let jwt_validator = Arc::new(JwtValidator::new(&(&settings.jwt).into()));
+    pub async fn new(settings: Settings) -> Result<Self, JwtError> {
+        let jwt_validator = Arc::new(JwtValidator::new(&(&settings.jwt).into())?);
 
         // Create connection manager with limits
         let limits = ConnectionLimits {
@@ -189,7 +189,7 @@ impl AppState {
                 (None, None, None, None, None)
             };
 
-        Self {
+        Ok(Self {
             settings: Arc::new(settings),
             jwt_validator,
             connection_manager,
@@ -209,6 +209,6 @@ impl AppState {
             offline_queue,
             circuit_breakers,
             start_time: Instant::now(),
-        }
+        })
     }
 }

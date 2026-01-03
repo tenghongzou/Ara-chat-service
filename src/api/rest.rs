@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::domain::validation::{limits, sanitize_message_content, sanitize_conversation_name};
 use crate::message::{ChatMessage, ConversationSummary, ContentType, ConversationType};
 use crate::server::AppState;
 
@@ -177,6 +178,33 @@ pub async fn create_conversation(
 ) -> Result<Json<ConversationSummary>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_id(&headers, &state)?;
 
+    // Validate name length
+    if let Some(ref name) = req.name {
+        if name.len() > limits::MAX_CONVERSATION_NAME_LENGTH {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    code: "NAME_TOO_LONG".to_string(),
+                    message: format!("Conversation name exceeds {} characters", limits::MAX_CONVERSATION_NAME_LENGTH),
+                }),
+            ));
+        }
+    }
+
+    // Validate participant count
+    if req.participants.len() > limits::MAX_PARTICIPANTS_PER_CONVERSATION {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                code: "TOO_MANY_PARTICIPANTS".to_string(),
+                message: format!("Max {} participants allowed", limits::MAX_PARTICIPANTS_PER_CONVERSATION),
+            }),
+        ));
+    }
+
+    // Sanitize conversation name
+    let name = req.name.map(|n| sanitize_conversation_name(&n));
+
     let conv_service = state.conversation_service.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -194,7 +222,7 @@ pub async fn create_conversation(
     }
 
     match conv_service
-        .create_conversation(req.conversation_type.clone(), user_id, all_participants, req.name)
+        .create_conversation(req.conversation_type.clone(), user_id, all_participants, name)
         .await
     {
         Ok(conversation) => {
@@ -300,6 +328,40 @@ pub async fn send_message(
 ) -> Result<Json<SendMessageResponse>, (StatusCode, Json<ErrorResponse>)> {
     let user_id = extract_user_id(&headers, &state)?;
 
+    // Validate content length
+    if req.content.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                code: "EMPTY_CONTENT".to_string(),
+                message: "Message content cannot be empty".to_string(),
+            }),
+        ));
+    }
+    if req.content.len() > limits::MAX_MESSAGE_LENGTH {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                code: "CONTENT_TOO_LONG".to_string(),
+                message: format!("Message exceeds {} characters", limits::MAX_MESSAGE_LENGTH),
+            }),
+        ));
+    }
+
+    // Validate mentions count
+    if req.mentions.len() > limits::MAX_MENTIONS_PER_MESSAGE {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                code: "TOO_MANY_MENTIONS".to_string(),
+                message: format!("Max {} mentions allowed", limits::MAX_MENTIONS_PER_MESSAGE),
+            }),
+        ));
+    }
+
+    // Sanitize content for XSS prevention
+    let content = sanitize_message_content(&req.content);
+
     // Check rate limit
     match state.rate_limiter.check_user_rate(user_id).await {
         Ok(result) => {
@@ -333,7 +395,7 @@ pub async fn send_message(
         .handle_send_message(
             user_id,
             conversation_id,
-            req.content,
+            content,
             req.content_type,
             req.reply_to,
             req.client_message_id.clone(),

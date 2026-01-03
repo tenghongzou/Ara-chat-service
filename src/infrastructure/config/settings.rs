@@ -25,6 +25,8 @@ pub struct Settings {
     pub cluster: ClusterSettings,
     #[serde(default)]
     pub otel: OtelSettings,
+    #[serde(default)]
+    pub cors: CorsSettings,
 }
 
 fn default_host() -> String {
@@ -199,6 +201,24 @@ fn default_otel_endpoint() -> String {
 
 fn default_service_name() -> String {
     "ara-chat-service".to_string()
+}
+
+/// CORS settings for API access control
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CorsSettings {
+    /// Allowed origins (empty = allow any in dev, deny all in prod)
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// Allow credentials (cookies, authorization headers)
+    #[serde(default)]
+    pub allow_credentials: bool,
+    /// Max age for preflight cache (seconds)
+    #[serde(default = "default_cors_max_age")]
+    pub max_age_seconds: u64,
+}
+
+fn default_cors_max_age() -> u64 {
+    3600 // 1 hour
 }
 
 impl Settings {

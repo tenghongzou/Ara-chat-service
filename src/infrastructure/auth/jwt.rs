@@ -4,6 +4,8 @@ use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::domain::validation::limits;
+
 /// JWT configuration
 #[derive(Debug, Clone)]
 pub struct JwtConfig {
@@ -46,7 +48,15 @@ pub struct JwtValidator {
 }
 
 impl JwtValidator {
-    pub fn new(config: &JwtConfig) -> Self {
+    pub fn new(config: &JwtConfig) -> Result<Self, JwtError> {
+        // Validate secret length for security
+        if config.secret.len() < limits::MIN_JWT_SECRET_LENGTH {
+            return Err(JwtError::SecretTooShort {
+                min: limits::MIN_JWT_SECRET_LENGTH,
+                actual: config.secret.len(),
+            });
+        }
+
         let decoding_key = DecodingKey::from_secret(config.secret.as_bytes());
 
         let mut validation = Validation::new(Algorithm::HS256);
@@ -60,10 +70,10 @@ impl JwtValidator {
             validation.set_audience(&[audience]);
         }
 
-        Self {
+        Ok(Self {
             decoding_key,
             validation,
-        }
+        })
     }
 
     /// Validate a JWT token
@@ -82,4 +92,7 @@ pub enum JwtError {
 
     #[error("Invalid subject in token")]
     InvalidSubject,
+
+    #[error("JWT secret too short (minimum {min} characters required, got {actual})")]
+    SecretTooShort { min: usize, actual: usize },
 }

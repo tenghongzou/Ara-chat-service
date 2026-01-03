@@ -27,8 +27,11 @@ async fn main() -> Result<()> {
         "Ara Chat Service starting"
     );
 
-    // Create application state
-    let state = AppState::new(settings.clone()).await;
+    // Create application state (validates JWT secret, etc.)
+    let state = AppState::new(settings.clone()).await.map_err(|e| {
+        tracing::error!(error = %e, "Failed to initialize application state");
+        anyhow::anyhow!("Configuration error: {}", e)
+    })?;
     tracing::info!("Application state initialized");
 
     // Create shutdown signal

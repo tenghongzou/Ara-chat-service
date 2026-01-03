@@ -66,10 +66,10 @@ Project status and planned features for Ara Chat Service.
 - [ ] Database migration tests / 資料庫遷移測試
 
 #### Security Enhancements / 安全增強
-- [ ] Input content sanitization (XSS prevention) / 輸入內容消毒
-- [ ] Message content length validation / 訊息長度驗證
-- [ ] JWT secret minimum length enforcement / JWT 密鑰長度驗證
-- [ ] CORS configuration for REST API / REST API CORS 配置
+- [x] Input content sanitization (XSS prevention) / 輸入內容消毒
+- [x] Message content length validation / 訊息長度驗證
+- [x] JWT secret minimum length enforcement / JWT 密鑰長度驗證
+- [x] CORS configuration for REST API / REST API CORS 配置
 
 ### Medium Priority / 中優先級
 
@@ -113,7 +113,7 @@ Project status and planned features for Ara Chat Service.
 ## Known Issues / 已知問題
 
 ### Security / 安全性
-- [ ] Message content not sanitized before storage / 訊息內容未消毒
+- [x] Message content not sanitized before storage / 訊息內容未消毒 *(Fixed in v1.0.1)*
 - [ ] Search query only escapes single quotes / 搜尋查詢轉義不完整
 
 ### Performance / 效能
@@ -129,7 +129,7 @@ Project status and planned features for Ara Chat Service.
 
 - [ ] Consolidate error handling across modules / 統一錯誤處理
 - [ ] Add request ID propagation / 添加請求 ID 傳播
-- [ ] Improve configuration validation / 改進配置驗證
+- [x] Improve configuration validation / 改進配置驗證 *(JWT secret length, input validation)*
 - [ ] Add graceful degradation for Redis failures / Redis 故障優雅降級
 
 ---
@@ -138,7 +138,7 @@ Project status and planned features for Ara Chat Service.
 
 ### v1.1.0 (Planned)
 - Unit tests coverage > 80%
-- Input sanitization
+- ~~Input sanitization~~ *(Completed)*
 - File upload support
 
 ### v1.2.0 (Planned)

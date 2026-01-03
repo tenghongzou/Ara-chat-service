@@ -8,3 +8,4 @@ pub mod message;
 pub mod presence;
 pub mod reaction;
 pub mod receipt;
+pub mod validation;
