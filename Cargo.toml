@@ -81,6 +81,10 @@ html-escape = "0.2"
 
 [dev-dependencies]
 tokio-test = "0.4"
+mockall = "0.13"
+fake = { version = "3", features = ["uuid", "chrono"] }
+rstest = "0.21"
+claim = "0.5"
 
 [profile.release]
 lto = true

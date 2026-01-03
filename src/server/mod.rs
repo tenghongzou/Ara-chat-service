@@ -40,8 +40,8 @@ fn create_cors_layer(settings: &CorsSettings) -> CorsLayer {
         let origins: Vec<HeaderValue> = settings
             .allowed_origins
             .iter()
-            .filter_map(|origin| {
-                origin.parse().ok().or_else(|| {
+            .filter_map(|origin: &String| {
+                origin.parse::<HeaderValue>().ok().or_else(|| {
                     tracing::warn!(origin = %origin, "Invalid CORS origin, skipping");
                     None
                 })

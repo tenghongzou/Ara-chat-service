@@ -4,5 +4,5 @@ mod settings;
 
 pub use settings::{
     Settings, JwtSettings, RedisSettings, DatabaseSettings,
-    WebSocketSettings, ClusterSettings, OtelSettings
+    WebSocketSettings, ClusterSettings, OtelSettings, CorsSettings
 };

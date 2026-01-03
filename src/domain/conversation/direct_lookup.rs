@@ -161,4 +161,74 @@ mod tests {
 
         assert_ne!(hash_ab, hash_ac);
     }
+
+    #[test]
+    fn test_pair_hash_deterministic() {
+        // Same pair should always produce the same hash
+        let user_a = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let user_b = Uuid::parse_str("6ba7b810-9dad-11d1-80b4-00c04fd430c8").unwrap();
+
+        let hash1 = DirectMessageLookup::generate_pair_hash(user_a, user_b);
+        let hash2 = DirectMessageLookup::generate_pair_hash(user_a, user_b);
+        let hash3 = DirectMessageLookup::generate_pair_hash(user_b, user_a);
+
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash2, hash3);
+    }
+
+    #[test]
+    fn test_pair_hash_byte_length() {
+        // SHA-256 produces 32 bytes (256 bits)
+        let user_a = Uuid::new_v4();
+        let user_b = Uuid::new_v4();
+
+        let hash = DirectMessageLookup::generate_pair_hash(user_a, user_b);
+
+        assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn test_pair_hash_same_user() {
+        // Edge case: user chatting with themselves
+        let user = Uuid::new_v4();
+
+        let hash = DirectMessageLookup::generate_pair_hash(user, user);
+
+        // Should still produce a valid 32-byte hash
+        assert_eq!(hash.len(), 32);
+    }
+
+    #[test]
+    fn test_pair_hash_distribution() {
+        // Generate many hashes and verify they're all unique
+        let users: Vec<Uuid> = (0..10).map(|_| Uuid::new_v4()).collect();
+        let mut hashes = std::collections::HashSet::new();
+
+        // Generate all unique pairs
+        for i in 0..users.len() {
+            for j in (i + 1)..users.len() {
+                let hash = DirectMessageLookup::generate_pair_hash(users[i], users[j]);
+                hashes.insert(hash);
+            }
+        }
+
+        // 10 users = 10*9/2 = 45 unique pairs
+        assert_eq!(hashes.len(), 45);
+    }
+
+    #[test]
+    fn test_pair_hash_specific_uuids() {
+        // Test with specific UUIDs to ensure consistent behavior across runs
+        let user_a = Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+        let user_b = Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap();
+
+        let hash_ab = DirectMessageLookup::generate_pair_hash(user_a, user_b);
+        let hash_ba = DirectMessageLookup::generate_pair_hash(user_b, user_a);
+
+        // Both should be identical
+        assert_eq!(hash_ab, hash_ba);
+
+        // Hash should be non-zero
+        assert!(hash_ab.iter().any(|&b| b != 0));
+    }
 }

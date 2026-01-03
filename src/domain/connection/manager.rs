@@ -201,3 +201,257 @@ pub enum ConnectionError {
     #[error("Maximum connections per user exceeded")]
     UserLimitExceeded,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+
+    fn create_test_connection(user_id: Uuid) -> (Connection, mpsc::UnboundedReceiver<OutboundMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let conn = Connection::new(Uuid::new_v4(), user_id, "test-tenant".to_string(), tx);
+        (conn, rx)
+    }
+
+    #[test]
+    fn test_new_creates_empty_manager() {
+        let manager = ConnectionManager::new();
+        assert_eq!(manager.total_connections(), 0);
+        assert_eq!(manager.unique_users(), 0);
+    }
+
+    #[test]
+    fn test_with_limits_applies_config() {
+        let limits = ConnectionLimits {
+            max_connections: 50,
+            max_connections_per_user: 3,
+        };
+        let manager = ConnectionManager::with_limits(limits);
+        assert_eq!(manager.total_connections(), 0);
+    }
+
+    #[test]
+    fn test_register_stores_connection() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+        let (conn, _rx) = create_test_connection(user_id);
+        let conn_id = conn.id;
+
+        manager.register(conn).unwrap();
+
+        assert_eq!(manager.total_connections(), 1);
+        assert!(manager.get_connection_info(&conn_id).is_some());
+    }
+
+    #[test]
+    fn test_register_updates_user_mapping() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+        let (conn, _rx) = create_test_connection(user_id);
+
+        manager.register(conn).unwrap();
+
+        assert!(manager.has_user(&user_id));
+        assert_eq!(manager.user_connection_count(&user_id), 1);
+    }
+
+    #[test]
+    fn test_register_fails_total_limit() {
+        let limits = ConnectionLimits {
+            max_connections: 2,
+            max_connections_per_user: 5,
+        };
+        let manager = ConnectionManager::with_limits(limits);
+
+        // Register 2 connections
+        for _ in 0..2 {
+            let user_id = Uuid::new_v4();
+            let (conn, _rx) = create_test_connection(user_id);
+            manager.register(conn).unwrap();
+        }
+
+        // Third should fail
+        let user_id = Uuid::new_v4();
+        let (conn, _rx) = create_test_connection(user_id);
+        let result = manager.register(conn);
+
+        assert!(matches!(result, Err(ConnectionError::TotalLimitExceeded)));
+    }
+
+    #[test]
+    fn test_register_fails_user_limit() {
+        let limits = ConnectionLimits {
+            max_connections: 100,
+            max_connections_per_user: 2,
+        };
+        let manager = ConnectionManager::with_limits(limits);
+        let user_id = Uuid::new_v4();
+
+        // Register 2 connections for same user
+        for _ in 0..2 {
+            let (conn, _rx) = create_test_connection(user_id);
+            manager.register(conn).unwrap();
+        }
+
+        // Third for same user should fail
+        let (conn, _rx) = create_test_connection(user_id);
+        let result = manager.register(conn);
+
+        assert!(matches!(result, Err(ConnectionError::UserLimitExceeded)));
+    }
+
+    #[test]
+    fn test_unregister_removes_connection() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+        let (conn, _rx) = create_test_connection(user_id);
+        let conn_id = conn.id;
+
+        manager.register(conn).unwrap();
+        assert_eq!(manager.total_connections(), 1);
+
+        let removed = manager.unregister(conn_id);
+        assert!(removed.is_some());
+        assert_eq!(manager.total_connections(), 0);
+        assert!(manager.get_connection_info(&conn_id).is_none());
+    }
+
+    #[test]
+    fn test_unregister_cleans_user_mapping() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+        let (conn, _rx) = create_test_connection(user_id);
+        let conn_id = conn.id;
+
+        manager.register(conn).unwrap();
+        assert!(manager.has_user(&user_id));
+
+        manager.unregister(conn_id);
+        assert!(!manager.has_user(&user_id));
+    }
+
+    #[test]
+    fn test_unregister_nonexistent() {
+        let manager = ConnectionManager::new();
+        let fake_id = Uuid::new_v4();
+
+        let result = manager.unregister(fake_id);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_has_user_true() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+        let (conn, _rx) = create_test_connection(user_id);
+
+        manager.register(conn).unwrap();
+
+        assert!(manager.has_user(&user_id));
+    }
+
+    #[test]
+    fn test_has_user_false() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        assert!(!manager.has_user(&user_id));
+    }
+
+    #[test]
+    fn test_user_connection_count() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+
+        // Initially zero
+        assert_eq!(manager.user_connection_count(&user_id), 0);
+
+        // Add connections
+        let (conn1, _rx1) = create_test_connection(user_id);
+        let (conn2, _rx2) = create_test_connection(user_id);
+
+        manager.register(conn1).unwrap();
+        assert_eq!(manager.user_connection_count(&user_id), 1);
+
+        manager.register(conn2).unwrap();
+        assert_eq!(manager.user_connection_count(&user_id), 2);
+    }
+
+    #[test]
+    fn test_total_connections() {
+        let manager = ConnectionManager::new();
+
+        // Add connections for different users
+        for i in 0..5 {
+            let user_id = Uuid::new_v4();
+            let (conn, _rx) = create_test_connection(user_id);
+            manager.register(conn).unwrap();
+            assert_eq!(manager.total_connections(), i + 1);
+        }
+    }
+
+    #[test]
+    fn test_unique_users() {
+        let manager = ConnectionManager::new();
+
+        let user1 = Uuid::new_v4();
+        let user2 = Uuid::new_v4();
+
+        let (conn1, _rx1) = create_test_connection(user1);
+        let (conn2, _rx2) = create_test_connection(user1); // Same user
+        let (conn3, _rx3) = create_test_connection(user2); // Different user
+
+        manager.register(conn1).unwrap();
+        manager.register(conn2).unwrap();
+        manager.register(conn3).unwrap();
+
+        assert_eq!(manager.unique_users(), 2);
+    }
+
+    #[test]
+    fn test_all_connection_ids() {
+        let manager = ConnectionManager::new();
+
+        let user_id = Uuid::new_v4();
+        let (conn1, _rx1) = create_test_connection(user_id);
+        let (conn2, _rx2) = create_test_connection(user_id);
+        let id1 = conn1.id;
+        let id2 = conn2.id;
+
+        manager.register(conn1).unwrap();
+        manager.register(conn2).unwrap();
+
+        let ids = manager.all_connection_ids();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&id1));
+        assert!(ids.contains(&id2));
+    }
+
+    #[test]
+    fn test_get_connection_info() {
+        let manager = ConnectionManager::new();
+        let user_id = Uuid::new_v4();
+        let (conn, _rx) = create_test_connection(user_id);
+        let conn_id = conn.id;
+
+        manager.register(conn).unwrap();
+
+        let info = manager.get_connection_info(&conn_id).unwrap();
+        assert_eq!(info.connection_id, conn_id);
+        assert_eq!(info.user_id, user_id);
+        assert_eq!(info.tenant_id, "test-tenant");
+    }
+
+    #[test]
+    fn test_default_impl() {
+        let manager = ConnectionManager::default();
+        assert_eq!(manager.total_connections(), 0);
+    }
+
+    #[test]
+    fn test_connection_limits_default() {
+        let limits = ConnectionLimits::default();
+        assert_eq!(limits.max_connections, 100_000);
+        assert_eq!(limits.max_connections_per_user, 5);
+    }
+}

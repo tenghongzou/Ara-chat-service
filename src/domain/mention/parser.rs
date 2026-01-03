@@ -102,4 +102,124 @@ mod tests {
         let mentions = MentionParser::parse(&content);
         assert_eq!(mentions.len(), 2);
     }
+
+    #[test]
+    fn test_parse_no_mentions() {
+        let content = "Hello world, no mentions here!";
+        let mentions = MentionParser::parse(content);
+        assert!(mentions.is_empty());
+    }
+
+    #[test]
+    fn test_parse_mention_at_start() {
+        let content = "@alice is the best";
+        let mentions = MentionParser::parse(content);
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].username, Some("alice".to_string()));
+        assert_eq!(mentions[0].start, 0);
+    }
+
+    #[test]
+    fn test_parse_mention_at_end() {
+        let content = "Thanks @bob";
+        let mentions = MentionParser::parse(content);
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].username, Some("bob".to_string()));
+        assert_eq!(mentions[0].end, content.len());
+    }
+
+    #[test]
+    fn test_parse_consecutive_mentions() {
+        let content = "@alice @bob @charlie";
+        let mentions = MentionParser::parse(content);
+        assert_eq!(mentions.len(), 3);
+        assert_eq!(mentions[0].username, Some("alice".to_string()));
+        assert_eq!(mentions[1].username, Some("bob".to_string()));
+        assert_eq!(mentions[2].username, Some("charlie".to_string()));
+    }
+
+    #[test]
+    fn test_parse_with_punctuation() {
+        let content = "Hey @alice, @bob! What do you think?";
+        let mentions = MentionParser::parse(content);
+        assert_eq!(mentions.len(), 2);
+        // Usernames should not include punctuation
+        assert_eq!(mentions[0].username, Some("alice".to_string()));
+        assert_eq!(mentions[1].username, Some("bob".to_string()));
+    }
+
+    #[test]
+    fn test_parse_invalid_uuid() {
+        let content = "@[not-a-valid-uuid-at-all-here]";
+        let mentions = MentionParser::parse(content);
+        // Should not match as UUID mention
+        assert!(mentions.iter().all(|m| m.user_id.is_none()));
+    }
+
+    #[test]
+    fn test_parse_email_not_mention() {
+        // @ in email should be treated as mention in current implementation
+        // This documents the current behavior
+        let content = "Contact us at support@example.com";
+        let mentions = MentionParser::parse(content);
+        // Note: current parser will match @example as a mention
+        // This test documents this behavior
+        assert!(!mentions.is_empty()); // @example is matched
+    }
+
+    #[test]
+    fn test_validate_mentions_filters_non_participants() {
+        let user1 = Uuid::new_v4();
+        let user2 = Uuid::new_v4();
+        let user3 = Uuid::new_v4();
+
+        let mentioned = vec![user1, user2, user3];
+        let participants = vec![user1, user3]; // user2 not a participant
+
+        let valid = MentionParser::validate_mentions(&mentioned, &participants);
+        assert_eq!(valid.len(), 2);
+        assert!(valid.contains(&user1));
+        assert!(valid.contains(&user3));
+        assert!(!valid.contains(&user2));
+    }
+
+    #[test]
+    fn test_validate_mentions_empty_participants() {
+        let user1 = Uuid::new_v4();
+        let mentioned = vec![user1];
+        let participants: Vec<Uuid> = vec![];
+
+        let valid = MentionParser::validate_mentions(&mentioned, &participants);
+        assert!(valid.is_empty());
+    }
+
+    #[test]
+    fn test_validate_mentions_all_valid() {
+        let user1 = Uuid::new_v4();
+        let user2 = Uuid::new_v4();
+
+        let mentioned = vec![user1, user2];
+        let participants = vec![user1, user2];
+
+        let valid = MentionParser::validate_mentions(&mentioned, &participants);
+        assert_eq!(valid.len(), 2);
+    }
+
+    #[test]
+    fn test_mention_match_position() {
+        let content = "Hello @world!";
+        let mentions = MentionParser::parse(content);
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].start, 6); // @ starts at index 6
+        assert_eq!(mentions[0].end, 12); // @world ends at index 12
+        assert_eq!(&content[mentions[0].start..mentions[0].end], "@world");
+    }
+
+    #[test]
+    fn test_parse_underscore_in_username() {
+        let content = "Hello @user_name!";
+        let mentions = MentionParser::parse(content);
+        assert_eq!(mentions.len(), 1);
+        assert_eq!(mentions[0].username, Some("user_name".to_string()));
+    }
 }

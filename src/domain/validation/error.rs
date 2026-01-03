@@ -48,3 +48,88 @@ impl ValidationError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_code_content_too_long() {
+        let err = ValidationError::ContentTooLong {
+            max: 10_000,
+            actual: 15_000,
+        };
+        assert_eq!(err.code(), "CONTENT_TOO_LONG");
+    }
+
+    #[test]
+    fn test_error_code_name_too_long() {
+        let err = ValidationError::NameTooLong { max: 100 };
+        assert_eq!(err.code(), "NAME_TOO_LONG");
+    }
+
+    #[test]
+    fn test_error_code_invalid_emoji() {
+        let err = ValidationError::InvalidEmoji { max: 32 };
+        assert_eq!(err.code(), "INVALID_EMOJI");
+    }
+
+    #[test]
+    fn test_error_code_too_many_mentions() {
+        let err = ValidationError::TooManyMentions { max: 50 };
+        assert_eq!(err.code(), "TOO_MANY_MENTIONS");
+    }
+
+    #[test]
+    fn test_error_code_too_many_participants() {
+        let err = ValidationError::TooManyParticipants { max: 500 };
+        assert_eq!(err.code(), "TOO_MANY_PARTICIPANTS");
+    }
+
+    #[test]
+    fn test_error_code_jwt_secret_too_short() {
+        let err = ValidationError::JwtSecretTooShort { min: 32 };
+        assert_eq!(err.code(), "JWT_SECRET_TOO_SHORT");
+    }
+
+    #[test]
+    fn test_error_code_empty_content() {
+        let err = ValidationError::EmptyContent;
+        assert_eq!(err.code(), "EMPTY_CONTENT");
+    }
+
+    #[test]
+    fn test_error_display_content_too_long() {
+        let err = ValidationError::ContentTooLong {
+            max: 10_000,
+            actual: 15_000,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("10000"));
+        assert!(msg.contains("15000"));
+        assert!(msg.contains("too long"));
+    }
+
+    #[test]
+    fn test_error_display_name_too_long() {
+        let err = ValidationError::NameTooLong { max: 100 };
+        let msg = err.to_string();
+        assert!(msg.contains("100"));
+        assert!(msg.contains("name"));
+    }
+
+    #[test]
+    fn test_error_display_jwt_secret() {
+        let err = ValidationError::JwtSecretTooShort { min: 32 };
+        let msg = err.to_string();
+        assert!(msg.contains("32"));
+        assert!(msg.contains("security"));
+    }
+
+    #[test]
+    fn test_error_debug_impl() {
+        let err = ValidationError::EmptyContent;
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("EmptyContent"));
+    }
+}

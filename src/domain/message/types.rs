@@ -427,3 +427,325 @@ impl From<ServerMessage> for OutboundMessage {
         Self::Raw(msg)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== ServerMessage Serialization Tests ====================
+
+    #[test]
+    fn test_server_message_authenticated_serialization() {
+        let user_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let msg = ServerMessage::authenticated(user_id);
+        let json = serde_json::to_string(&msg).unwrap();
+
+        assert!(json.contains("\"type\":\"authenticated\""));
+        assert!(json.contains("\"user_id\":\"550e8400-e29b-41d4-a716-446655440000\""));
+    }
+
+    #[test]
+    fn test_server_message_error_serialization() {
+        let msg = ServerMessage::error("INVALID_TOKEN", "Token has expired");
+        let json = serde_json::to_string(&msg).unwrap();
+
+        assert!(json.contains("\"type\":\"error\""));
+        assert!(json.contains("INVALID_TOKEN"));
+        assert!(json.contains("Token has expired"));
+    }
+
+    #[test]
+    fn test_server_message_shutdown_serialization() {
+        let msg = ServerMessage::shutdown("Server maintenance", Some(30));
+        let json = serde_json::to_string(&msg).unwrap();
+
+        assert!(json.contains("\"type\":\"shutdown\""));
+        assert!(json.contains("Server maintenance"));
+        assert!(json.contains("30"));
+    }
+
+    #[test]
+    fn test_server_message_pong_serialization() {
+        let msg = ServerMessage::Pong;
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"pong\""));
+    }
+
+    // ==================== ClientMessage Deserialization Tests ====================
+
+    #[test]
+    fn test_client_message_ping_deserialization() {
+        let json = r#"{"type":"Ping"}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, ClientMessage::Ping));
+    }
+
+    #[test]
+    fn test_client_message_authenticate_deserialization() {
+        let json = r#"{"type":"Authenticate","payload":{"token":"test-jwt-token"}}"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+
+        if let ClientMessage::Authenticate { token } = msg {
+            assert_eq!(token, "test-jwt-token");
+        } else {
+            panic!("Expected Authenticate message");
+        }
+    }
+
+    #[test]
+    fn test_client_message_send_message_deserialization() {
+        let json = r#"{
+            "type": "SendMessage",
+            "payload": {
+                "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "content": "Hello world!",
+                "content_type": "text"
+            }
+        }"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+
+        if let ClientMessage::SendMessage {
+            conversation_id,
+            content,
+            content_type,
+            mentions,
+            ..
+        } = msg
+        {
+            assert_eq!(
+                conversation_id.to_string(),
+                "550e8400-e29b-41d4-a716-446655440000"
+            );
+            assert_eq!(content, "Hello world!");
+            assert_eq!(content_type, ContentType::Text);
+            assert!(mentions.is_empty()); // Default empty vec
+        } else {
+            panic!("Expected SendMessage");
+        }
+    }
+
+    #[test]
+    fn test_client_message_typing_deserialization() {
+        let json = r#"{
+            "type": "Typing",
+            "payload": {
+                "conversation_id": "550e8400-e29b-41d4-a716-446655440000",
+                "is_typing": true
+            }
+        }"#;
+        let msg: ClientMessage = serde_json::from_str(json).unwrap();
+
+        if let ClientMessage::Typing {
+            conversation_id,
+            is_typing,
+        } = msg
+        {
+            assert_eq!(
+                conversation_id.to_string(),
+                "550e8400-e29b-41d4-a716-446655440000"
+            );
+            assert!(is_typing);
+        } else {
+            panic!("Expected Typing");
+        }
+    }
+
+    // ==================== OutboundMessage Tests ====================
+
+    #[test]
+    fn test_outbound_message_from_server_message() {
+        let msg = ServerMessage::Pong;
+        let outbound: OutboundMessage = msg.into();
+
+        assert!(matches!(outbound, OutboundMessage::Raw(_)));
+    }
+
+    #[test]
+    fn test_outbound_message_preserialized() {
+        let msg = ServerMessage::error("TEST", "Test message");
+        let outbound = OutboundMessage::preserialized(&msg).unwrap();
+
+        assert!(matches!(outbound, OutboundMessage::Serialized(_)));
+
+        let json = outbound.to_json().unwrap();
+        assert!(json.contains("TEST"));
+        assert!(json.contains("Test message"));
+    }
+
+    #[test]
+    fn test_outbound_message_raw_to_json() {
+        let msg = ServerMessage::Pong;
+        let outbound = OutboundMessage::Raw(msg);
+        let json = outbound.to_json().unwrap();
+        assert!(json.contains("pong"));
+    }
+
+    #[test]
+    fn test_outbound_message_serialized_arc_sharing() {
+        let msg = ServerMessage::error("SHARED", "Shared message");
+        let outbound = OutboundMessage::preserialized(&msg).unwrap();
+
+        // Clone should share the Arc
+        let outbound2 = outbound.clone();
+
+        let json1 = outbound.to_json().unwrap();
+        let json2 = outbound2.to_json().unwrap();
+
+        assert_eq!(json1, json2);
+    }
+
+    // ==================== Enum Default Tests ====================
+
+    #[test]
+    fn test_content_type_default() {
+        let default = ContentType::default();
+        assert_eq!(default, ContentType::Text);
+    }
+
+    #[test]
+    fn test_presence_status_default() {
+        let default = PresenceStatus::default();
+        assert_eq!(default, PresenceStatus::Offline);
+    }
+
+    #[test]
+    fn test_participant_role_default() {
+        let default = ParticipantRole::default();
+        assert_eq!(default, ParticipantRole::Member);
+    }
+
+    // ==================== Enum Serialization Tests ====================
+
+    #[test]
+    fn test_content_type_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ContentType::Text).unwrap(),
+            "\"text\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ContentType::Image).unwrap(),
+            "\"image\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ContentType::File).unwrap(),
+            "\"file\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ContentType::System).unwrap(),
+            "\"system\""
+        );
+    }
+
+    #[test]
+    fn test_presence_status_serialization() {
+        assert_eq!(
+            serde_json::to_string(&PresenceStatus::Online).unwrap(),
+            "\"online\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PresenceStatus::Away).unwrap(),
+            "\"away\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PresenceStatus::Busy).unwrap(),
+            "\"busy\""
+        );
+        assert_eq!(
+            serde_json::to_string(&PresenceStatus::Offline).unwrap(),
+            "\"offline\""
+        );
+    }
+
+    #[test]
+    fn test_conversation_type_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ConversationType::Direct).unwrap(),
+            "\"direct\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ConversationType::Group).unwrap(),
+            "\"group\""
+        );
+    }
+
+    #[test]
+    fn test_reaction_action_serialization() {
+        assert_eq!(
+            serde_json::to_string(&ReactionAction::Add).unwrap(),
+            "\"add\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ReactionAction::Remove).unwrap(),
+            "\"remove\""
+        );
+    }
+
+    // ==================== ChatMessage Tests ====================
+
+    #[test]
+    fn test_chat_message_serialization() {
+        let msg = ChatMessage {
+            id: Uuid::new_v4(),
+            conversation_id: Uuid::new_v4(),
+            sender_id: Uuid::new_v4(),
+            content: "Hello!".to_string(),
+            content_type: ContentType::Text,
+            created_at: 1704067200,
+            updated_at: None,
+            reply_to_id: None,
+            mentions: vec![],
+            reactions: HashMap::new(),
+            recalled_at: None,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("Hello!"));
+        assert!(json.contains("\"content_type\":\"text\""));
+        // Optional fields with None should not appear
+        assert!(!json.contains("updated_at"));
+        assert!(!json.contains("reply_to_id"));
+        assert!(!json.contains("recalled_at"));
+    }
+
+    #[test]
+    fn test_chat_message_with_reactions() {
+        let user_id = Uuid::new_v4();
+        let mut reactions = HashMap::new();
+        reactions.insert("👍".to_string(), vec![user_id]);
+
+        let msg = ChatMessage {
+            id: Uuid::new_v4(),
+            conversation_id: Uuid::new_v4(),
+            sender_id: Uuid::new_v4(),
+            content: "Hello!".to_string(),
+            content_type: ContentType::Text,
+            created_at: 1704067200,
+            updated_at: None,
+            reply_to_id: None,
+            mentions: vec![],
+            reactions,
+            recalled_at: None,
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("👍"));
+    }
+
+    // ==================== UnreadSyncData Tests ====================
+
+    #[test]
+    fn test_unread_sync_data_serialization() {
+        let conv_id = Uuid::new_v4();
+        let mut per_conversation = HashMap::new();
+        per_conversation.insert(conv_id, 5u64);
+
+        let data = UnreadSyncData {
+            total: 10,
+            per_conversation,
+        };
+
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(json.contains("\"total\":10"));
+        assert!(json.contains(&conv_id.to_string()));
+    }
+}
