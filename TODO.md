@@ -45,17 +45,19 @@ Project status and planned features for Ara Chat Service.
 - [x] Health check endpoints / 健康檢查端點
 - [x] Structured logging / 結構化日誌
 
-### Testing / 測試 *(v1.0.3)*
-- [x] Unit tests: 184 tests passing / 單元測試：184 項通過
+### Testing / 測試 *(v1.0.4)*
+- [x] Unit tests: 211 tests passing / 單元測試：211 項通過
   - validation (sanitizer, limits, error): 33 tests
   - mention/parser: 14 tests
-  - message (types, handler, router, storage, offline_queue): 80 tests
+  - message (types, handler, router, storage, offline_queue): 89 tests
   - connection/manager: 18 tests
   - conversation/direct_lookup: 7 tests
   - presence/tracker: 22 tests
   - receipt/unread: 9 tests
   - cluster/session_store: 10 tests
   - infrastructure (ratelimit, circuit_breaker, sharding): 5 tests
+  - api (error, middleware): 20 tests
+  - redis/fallback: 8 tests
 
 ### Documentation / 文檔
 - [x] README.md
@@ -139,20 +141,21 @@ Project status and planned features for Ara Chat Service.
 
 ## Technical Debt / 技術債務
 
-- [ ] Consolidate error handling across modules / 統一錯誤處理
-- [ ] Add request ID propagation / 添加請求 ID 傳播
+- [x] Consolidate error handling across modules / 統一錯誤處理 *(Unified ApiError with IntoResponse)*
+- [x] Add request ID propagation / 添加請求 ID 傳播 *(X-Request-ID middleware)*
 - [x] Improve configuration validation / 改進配置驗證 *(JWT secret length, input validation)*
-- [ ] Add graceful degradation for Redis failures / Redis 故障優雅降級
+- [x] Add graceful degradation for Redis failures / Redis 故障優雅降級 *(RedisFallback with backoff)*
 
 ---
 
 ## Milestones / 里程碑
 
 ### v1.1.0 (Planned)
-- ~~Unit tests coverage > 80%~~ *(Completed: 184 tests)*
+- ~~Unit tests coverage > 80%~~ *(Completed: 211 tests)*
 - ~~Input sanitization~~ *(Completed)*
 - ~~Search query security~~ *(Completed)*
 - ~~Full-text search index~~ *(Completed)*
+- ~~Technical debt cleanup~~ *(Completed: unified errors, request ID, Redis fallback)*
 - File upload support
 
 ### v1.2.0 (Planned)

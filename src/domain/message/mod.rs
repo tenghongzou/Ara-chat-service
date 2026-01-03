@@ -7,7 +7,7 @@ mod router;
 mod storage;
 
 pub use types::*;
-pub use handler::MessageHandler;
+pub use handler::{MessageHandler, MessageHandlerError};
 pub use offline_queue::{OfflineQueue, OfflineQueueError, QueuedMessage};
-pub use router::MessageRouter;
-pub use storage::{MessageStorage, MessageSearchResult};
+pub use router::{MessageRouter, RouterError};
+pub use storage::{MessageStorage, MessageSearchResult, StorageError};
