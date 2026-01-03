@@ -12,14 +12,14 @@ use crate::conversation::ConversationService;
 /// Routes messages to conversation participants
 pub struct MessageRouter {
     connection_manager: Arc<ConnectionManager>,
-    cluster_router: Arc<ClusterRouter>,
+    cluster_router: Option<Arc<ClusterRouter>>,
     conversation_service: Arc<ConversationService>,
 }
 
 impl MessageRouter {
     pub fn new(
         connection_manager: Arc<ConnectionManager>,
-        cluster_router: Arc<ClusterRouter>,
+        cluster_router: Option<Arc<ClusterRouter>>,
         conversation_service: Arc<ConversationService>,
     ) -> Self {
         Self {
@@ -54,14 +54,15 @@ impl MessageRouter {
             // Try local delivery first
             if self.connection_manager.has_user(&user_id) {
                 self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
-            } else {
+            } else if let Some(ref cluster_router) = self.cluster_router {
                 // Route through cluster with offline queue support
-                self.cluster_router.route_to_user_with_queue(
+                cluster_router.route_to_user_with_queue(
                     user_id,
                     outbound.clone(),
                     server_message.clone(),
                 ).await.map_err(|e| RouterError::ClusterError(e.to_string()))?;
             }
+            // If no cluster router and user not local, message will be delivered when they reconnect
         }
 
         Ok(())
@@ -90,8 +91,8 @@ impl MessageRouter {
         for user_id in participants {
             if self.connection_manager.has_user(&user_id) {
                 self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
-            } else {
-                self.cluster_router.route_to_user_with_queue(
+            } else if let Some(ref cluster_router) = self.cluster_router {
+                cluster_router.route_to_user_with_queue(
                     user_id,
                     outbound.clone(),
                     server_message.clone(),
@@ -121,8 +122,8 @@ impl MessageRouter {
         for &user_id in mentions {
             if self.connection_manager.has_user(&user_id) {
                 self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
-            } else {
-                self.cluster_router.route_to_user_with_queue(
+            } else if let Some(ref cluster_router) = self.cluster_router {
+                cluster_router.route_to_user_with_queue(
                     user_id,
                     outbound.clone(),
                     server_message.clone(),
@@ -153,8 +154,8 @@ impl MessageRouter {
         for user_id in participants {
             if self.connection_manager.has_user(&user_id) {
                 self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
-            } else {
-                self.cluster_router.route_to_user_with_queue(
+            } else if let Some(ref cluster_router) = self.cluster_router {
+                cluster_router.route_to_user_with_queue(
                     user_id,
                     outbound.clone(),
                     server_message.clone(),
@@ -193,8 +194,8 @@ impl MessageRouter {
 
             if self.connection_manager.has_user(&participant_id) {
                 self.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
-            } else {
-                self.cluster_router.route_to_user(participant_id, outbound.clone()).await
+            } else if let Some(ref cluster_router) = self.cluster_router {
+                cluster_router.route_to_user(participant_id, outbound.clone()).await
                     .map_err(|e| RouterError::ClusterError(e.to_string()))?;
             }
         }

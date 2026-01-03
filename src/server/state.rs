@@ -160,11 +160,11 @@ impl AppState {
                 // Reaction service
                 let reaction = Arc::new(ReactionService::new(sqlx_pool.clone()));
 
-                // Message handler (needs cluster router)
-                let handler = if let Some(ref cr) = cluster_router {
+                // Message handler (works with or without cluster router)
+                let handler = {
                     let router = Arc::new(MessageRouter::new(
                         connection_manager.clone(),
-                        cr.clone(),
+                        cluster_router.clone(),
                         conv_service.clone(),
                     ));
                     Some(Arc::new(MessageHandler::new(
@@ -172,8 +172,6 @@ impl AppState {
                         router,
                         conv_service.clone(),
                     )))
-                } else {
-                    None
                 };
 
                 (Some(storage), Some(conv_service), handler, Some(receipt), Some(reaction))
