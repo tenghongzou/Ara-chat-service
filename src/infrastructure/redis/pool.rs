@@ -28,6 +28,11 @@ impl RedisPool {
         self.client.get_multiplexed_async_connection().await
     }
 
+    /// Get the underlying Redis client (for pub/sub)
+    pub fn get_client(&self) -> Result<Client, redis::RedisError> {
+        Ok(self.client.clone())
+    }
+
     /// Check if Redis is healthy
     pub async fn is_healthy(&self) -> bool {
         match self.get_connection().await {

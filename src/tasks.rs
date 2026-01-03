@@ -6,10 +6,12 @@
 //! - Session refresh
 //! - Stale connection cleanup
 //! - Partition management (permanent storage)
+//! - Cluster message subscriber
 
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
+use futures::StreamExt;
 use tokio::sync::broadcast;
 
 use crate::metrics;
@@ -37,15 +39,18 @@ impl BackgroundTasks {
         let session_state = state.clone();
         let stale_conn_state = state.clone();
         let partition_state = state.clone();
+        let cluster_state = state.clone();
 
         // Track active tasks
-        metrics::ACTIVE_TASKS.set(5);
+        let task_count = if state.settings.cluster.enabled { 6 } else { 5 };
+        metrics::ACTIVE_TASKS.set(task_count);
 
         let heartbeat = run_heartbeat(heartbeat_state);
         let metrics_update = run_metrics_update(metrics_state);
         let session_refresh = run_session_refresh(session_state);
         let stale_cleanup = run_stale_connection_cleanup(stale_conn_state);
         let partition_mgmt = run_partition_management(partition_state);
+        let cluster_sub = run_cluster_subscriber(cluster_state);
 
         tokio::select! {
             _ = heartbeat => {
@@ -62,6 +67,9 @@ impl BackgroundTasks {
             },
             _ = partition_mgmt => {
                 tracing::warn!("Partition management task exited unexpectedly");
+            },
+            _ = cluster_sub => {
+                tracing::warn!("Cluster subscriber task exited unexpectedly");
             },
             _ = shutdown_rx.recv() => {
                 tracing::info!("Background tasks received shutdown signal");
@@ -262,6 +270,85 @@ async fn run_partition_management(state: AppState) {
 
         // Wait until next hour
         tokio::time::sleep(Duration::from_secs(3600)).await;
+    }
+}
+
+/// Cluster subscriber task - listens for routed messages from other servers
+async fn run_cluster_subscriber(state: AppState) {
+    if !state.settings.cluster.enabled {
+        std::future::pending::<()>().await;
+        return;
+    }
+
+    let Some(ref redis_pool) = state.redis_pool else {
+        tracing::warn!("Cluster mode enabled but Redis not available, subscriber not started");
+        std::future::pending::<()>().await;
+        return;
+    };
+
+    let Some(ref cluster_router) = state.cluster_router else {
+        tracing::warn!("Cluster router not available, subscriber not started");
+        std::future::pending::<()>().await;
+        return;
+    };
+
+    let channel = cluster_router.routing_channel();
+    tracing::info!(
+        channel = %channel,
+        server_id = %cluster_router.server_id(),
+        "Starting cluster message subscriber"
+    );
+
+    loop {
+        // Create pub/sub connection
+        let client = match redis_pool.get_client() {
+            Ok(client) => client,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to get Redis client for pub/sub");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+
+        let mut pubsub = match client.get_async_pubsub().await {
+            Ok(ps) => ps,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to create Redis pub/sub connection");
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                continue;
+            }
+        };
+
+        if let Err(e) = pubsub.subscribe(&channel).await {
+            tracing::error!(error = %e, channel = %channel, "Failed to subscribe to cluster channel");
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            continue;
+        }
+
+        tracing::info!(channel = %channel, "Subscribed to cluster routing channel");
+        metrics::CLUSTER_SUBSCRIBED.set(1);
+
+        let mut message_stream = pubsub.on_message();
+
+        while let Some(msg) = message_stream.next().await {
+            let payload: String = match msg.get_payload() {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to get message payload");
+                    continue;
+                }
+            };
+
+            if let Err(e) = cluster_router.handle_routed_message(&payload).await {
+                tracing::warn!(error = %e, "Failed to handle routed message");
+            } else {
+                metrics::CLUSTER_MESSAGES_RECEIVED.inc();
+            }
+        }
+
+        tracing::warn!("Cluster subscription stream ended, reconnecting...");
+        metrics::CLUSTER_SUBSCRIBED.set(0);
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 

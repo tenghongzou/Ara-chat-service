@@ -111,15 +111,25 @@ impl AppState {
         let circuit_breakers = Some(Arc::new(CircuitBreakers::new()));
 
         // Create cluster router (with offline queue for message delivery to offline users)
-        let cluster_router = session_store.as_ref().map(|store| {
-            Arc::new(
+        let cluster_router = if let Some(ref store) = session_store {
+            let router = if let Some(ref pool) = redis_pool {
+                ClusterRouter::with_redis(
+                    connection_manager.clone(),
+                    store.clone(),
+                    pool.clone(),
+                    settings.cluster.server_id.clone(),
+                )
+            } else {
                 ClusterRouter::new(
                     connection_manager.clone(),
                     store.clone(),
                     settings.cluster.server_id.clone(),
-                ).with_offline_queue(offline_queue.clone())
-            )
-        });
+                )
+            };
+            Some(Arc::new(router.with_offline_queue(offline_queue.clone())))
+        } else {
+            None
+        };
 
         // Create presence tracker
         let presence_tracker = Some(Arc::new(PresenceTracker::new(

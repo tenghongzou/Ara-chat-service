@@ -138,6 +138,18 @@ lazy_static! {
         "Total active cluster sessions"
     ).unwrap();
 
+    /// Cluster subscription status (1=subscribed, 0=disconnected)
+    pub static ref CLUSTER_SUBSCRIBED: IntGauge = register_int_gauge!(
+        "chat_cluster_subscribed",
+        "Cluster pub/sub subscription status"
+    ).unwrap();
+
+    /// Messages received from other cluster nodes
+    pub static ref CLUSTER_MESSAGES_RECEIVED: IntCounter = register_int_counter!(
+        "chat_cluster_messages_received_total",
+        "Total messages received from other cluster nodes"
+    ).unwrap();
+
     // ========================================
     // Database Metrics
     // ========================================
