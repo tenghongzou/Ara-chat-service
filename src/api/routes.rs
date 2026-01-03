@@ -1,6 +1,7 @@
 //! API routes
 
 use axum::{
+    middleware,
     routing::{get, post},
     Router,
 };
@@ -13,6 +14,7 @@ use super::health::{
     detailed_health,
     prometheus_metrics,
 };
+use super::middleware::request_id_middleware;
 use super::websocket::websocket_handler;
 use super::rest;
 
@@ -39,5 +41,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/unread", get(rest::get_unread_counts))
         // REST API - Search
         .route("/api/v1/search/messages", get(rest::search_messages))
+        // Apply middleware
+        .layer(middleware::from_fn(request_id_middleware))
         .with_state(state)
 }

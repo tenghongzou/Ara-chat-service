@@ -44,6 +44,42 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Create a minimal AppState for testing (no external dependencies)
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn for_testing(settings: Settings) -> Result<Self, JwtError> {
+        let jwt_validator = Arc::new(JwtValidator::new(&(&settings.jwt).into())?);
+
+        let limits = ConnectionLimits {
+            max_connections: settings.websocket.max_connections,
+            max_connections_per_user: settings.websocket.max_connections_per_user,
+        };
+        let connection_manager = Arc::new(ConnectionManager::with_limits(limits));
+        let rate_limiter = Arc::new(RateLimiter::new(None));
+        let offline_queue = Arc::new(OfflineQueue::new(None));
+
+        Ok(Self {
+            settings: Arc::new(settings),
+            jwt_validator,
+            connection_manager,
+            redis_pool: None,
+            postgres_pool: None,
+            session_store: None,
+            cluster_router: None,
+            presence_tracker: None,
+            presence_broadcaster: None,
+            message_handler: None,
+            message_storage: None,
+            conversation_service: None,
+            receipt_tracker: None,
+            reaction_service: None,
+            redis_cache: None,
+            rate_limiter,
+            offline_queue,
+            circuit_breakers: None,
+            start_time: Instant::now(),
+        })
+    }
+
     pub async fn new(settings: Settings) -> Result<Self, JwtError> {
         let jwt_validator = Arc::new(JwtValidator::new(&(&settings.jwt).into())?);
 

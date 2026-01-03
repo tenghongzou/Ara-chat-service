@@ -222,6 +222,43 @@ fn default_cors_max_age() -> u64 {
 }
 
 impl Settings {
+    /// Create minimal settings for testing (no external dependencies)
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn for_testing() -> Self {
+        Self {
+            host: "127.0.0.1".to_string(),
+            port: 0, // Will be assigned by OS
+            jwt: JwtSettings {
+                secret: "test-secret-key-that-is-at-least-32-characters-long".to_string(),
+                issuer: Some("test-issuer".to_string()),
+                audience: Some("test-audience".to_string()),
+            },
+            redis: RedisSettings::default(),
+            database: DatabaseSettings {
+                url: "postgres://test:test@localhost:5432/test".to_string(),
+                max_connections: 5,
+                min_connections: 1,
+                run_migrations: false,
+                migrations_path: "./migrations".to_string(),
+                sharding_enabled: false,
+                coordinator_url: None,
+                worker_nodes: vec![],
+                shard_count: 1024,
+                acquire_timeout_seconds: 30,
+                idle_timeout_seconds: 300,
+            },
+            websocket: WebSocketSettings::default(),
+            cluster: ClusterSettings {
+                enabled: false,
+                server_id: "test-server".to_string(),
+                session_prefix: "test:sessions".to_string(),
+                routing_channel: "test:route".to_string(),
+            },
+            otel: OtelSettings::default(),
+            cors: CorsSettings::default(),
+        }
+    }
+
     /// Load settings from environment and config files
     pub fn new() -> Result<Self, config::ConfigError> {
         let run_mode = std::env::var("RUN_MODE").unwrap_or_else(|_| "development".into());

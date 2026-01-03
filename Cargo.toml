@@ -5,6 +5,10 @@ edition = "2021"
 authors = ["Ara Team"]
 description = "Real-time chat service with WebSocket support for instant messaging"
 
+[features]
+default = []
+test-utils = []
+
 [dependencies]
 # Web framework
 axum = { version = "0.8", features = ["ws", "macros"] }
@@ -85,6 +89,13 @@ mockall = "0.13"
 fake = { version = "3", features = ["uuid", "chrono"] }
 rstest = "0.21"
 claim = "0.5"
+# Integration testing
+axum-test = "16"
+hyper = "1"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 
 [profile.release]
 lto = true

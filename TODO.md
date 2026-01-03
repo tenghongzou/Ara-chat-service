@@ -45,7 +45,7 @@ Project status and planned features for Ara Chat Service.
 - [x] Health check endpoints / 健康檢查端點
 - [x] Structured logging / 結構化日誌
 
-### Testing / 測試 *(v1.0.4)*
+### Testing / 測試 *(v1.0.5)*
 - [x] Unit tests: 211 tests passing / 單元測試：211 項通過
   - validation (sanitizer, limits, error): 33 tests
   - mention/parser: 14 tests
@@ -58,6 +58,12 @@ Project status and planned features for Ara Chat Service.
   - infrastructure (ratelimit, circuit_breaker, sharding): 5 tests
   - api (error, middleware): 20 tests
   - redis/fallback: 8 tests
+- [x] Integration tests: 24 tests passing / 整合測試：24 項通過
+  - health endpoints: 6 tests
+  - authentication/authorization: 12 tests
+  - request ID middleware: 2 tests
+  - WebSocket protocol: 4 tests
+- [x] Database migration tests: 9 tests passing / 資料庫遷移測試：9 項通過
 
 ### Documentation / 文檔
 - [x] README.md
@@ -74,10 +80,10 @@ Project status and planned features for Ara Chat Service.
 ### High Priority / 高優先級
 
 #### Testing / 測試
-- [x] Unit tests for domain layer (184 tests) / 領域層單元測試 *(Completed in v1.0.3)*
-- [ ] Integration tests / 整合測試
-- [ ] WebSocket protocol tests / WebSocket 協議測試
-- [ ] Database migration tests / 資料庫遷移測試
+- [x] Unit tests for domain layer (211 tests) / 領域層單元測試 *(Completed in v1.0.4)*
+- [x] Integration tests (24 tests) / 整合測試 *(Completed in v1.0.5)*
+- [x] WebSocket protocol tests (4 tests) / WebSocket 協議測試 *(Completed in v1.0.5)*
+- [x] Database migration tests (9 tests) / 資料庫遷移測試 *(Completed in v1.0.5)*
 
 #### Security Enhancements / 安全增強
 - [x] Input content sanitization (XSS prevention) / 輸入內容消毒
@@ -156,6 +162,8 @@ Project status and planned features for Ara Chat Service.
 - ~~Search query security~~ *(Completed)*
 - ~~Full-text search index~~ *(Completed)*
 - ~~Technical debt cleanup~~ *(Completed: unified errors, request ID, Redis fallback)*
+- ~~Integration tests~~ *(Completed: 24 tests)*
+- ~~Database migration tests~~ *(Completed: 9 tests)*
 - File upload support
 
 ### v1.2.0 (Planned)
