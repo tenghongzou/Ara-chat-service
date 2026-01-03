@@ -123,8 +123,15 @@ async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
         while let Some(result) = ws_receiver.next().await {
             match result {
                 Ok(Message::Text(text)) => {
-                    if let Ok(msg) = serde_json::from_str::<ClientMessage>(&text) {
-                        handle_client_message(user_id, msg, &state).await;
+                    match serde_json::from_str::<ClientMessage>(&text) {
+                        Ok(msg) => {
+                            tracing::debug!(user_id = %user_id, msg_type = ?std::mem::discriminant(&msg), "Received client message");
+                            handle_client_message(user_id, msg, &state).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(user_id = %user_id, error = %e, raw = %text, "Failed to parse client message");
+                            send_error(user_id, "INVALID_MESSAGE", format!("Failed to parse message: {}", e), &state).await;
+                        }
                     }
                 }
                 Ok(Message::Close(_)) => break,
@@ -297,6 +304,13 @@ async fn handle_send_message(
     mentions: Vec<Uuid>,
     state: &AppState,
 ) {
+    tracing::info!(
+        user_id = %user_id,
+        conversation_id = %conversation_id,
+        content_len = content.len(),
+        "Processing SendMessage"
+    );
+
     // Check rate limit before processing
     match state.rate_limiter.check_user_rate(user_id).await {
         Ok(result) => {
