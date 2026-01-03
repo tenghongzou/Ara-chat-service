@@ -273,4 +273,121 @@ mod tests {
         assert!(!queued.id.is_nil());
         assert!(queued.queued_at > 0);
     }
+
+    #[test]
+    fn test_queued_message_serialization() {
+        let msg = ServerMessage::Pong;
+        let queued = QueuedMessage::new(msg);
+
+        let serialized = serde_json::to_string(&queued).unwrap();
+        let deserialized: QueuedMessage = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(queued.id, deserialized.id);
+        assert_eq!(queued.queued_at, deserialized.queued_at);
+    }
+
+    #[test]
+    fn test_offline_queue_new_defaults() {
+        let queue = OfflineQueue::new(None);
+        assert_eq!(queue.max_messages_per_user, 1000);
+        assert_eq!(queue.message_ttl, Duration::from_secs(7 * 24 * 60 * 60));
+        assert_eq!(queue.prefix, "chat:offline");
+    }
+
+    #[test]
+    fn test_offline_queue_with_config() {
+        let queue = OfflineQueue::with_config(None, 500, Duration::from_secs(3600));
+        assert_eq!(queue.max_messages_per_user, 500);
+        assert_eq!(queue.message_ttl, Duration::from_secs(3600));
+    }
+
+    #[test]
+    fn test_queue_key_format() {
+        let queue = OfflineQueue::new(None);
+        let user_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let key = queue.queue_key(user_id);
+        assert_eq!(key, "chat:offline:queue:550e8400-e29b-41d4-a716-446655440000");
+    }
+
+    #[tokio::test]
+    async fn test_queue_message_no_redis() {
+        let queue = OfflineQueue::new(None);
+        let user_id = Uuid::new_v4();
+        let msg = ServerMessage::Pong;
+
+        // Should succeed silently when no Redis
+        let result = queue.queue_message(user_id, msg).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_peek_messages_no_redis() {
+        let queue = OfflineQueue::new(None);
+        let user_id = Uuid::new_v4();
+
+        // Should return empty vec when no Redis
+        let result = queue.peek_messages(user_id, None).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_drain_messages_no_redis() {
+        let queue = OfflineQueue::new(None);
+        let user_id = Uuid::new_v4();
+
+        // Should return empty vec when no Redis
+        let result = queue.drain_messages(user_id).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_remove_message_no_redis() {
+        let queue = OfflineQueue::new(None);
+        let user_id = Uuid::new_v4();
+        let message_id = Uuid::new_v4();
+
+        // Should return false when no Redis
+        let result = queue.remove_message(user_id, message_id).await.unwrap();
+        assert!(!result);
+    }
+
+    #[tokio::test]
+    async fn test_queue_size_no_redis() {
+        let queue = OfflineQueue::new(None);
+        let user_id = Uuid::new_v4();
+
+        // Should return 0 when no Redis
+        let result = queue.queue_size(user_id).await.unwrap();
+        assert_eq!(result, 0);
+    }
+
+    #[tokio::test]
+    async fn test_clear_queue_no_redis() {
+        let queue = OfflineQueue::new(None);
+        let user_id = Uuid::new_v4();
+
+        // Should succeed silently when no Redis
+        let result = queue.clear_queue(user_id).await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_offline_queue_error_redis_display() {
+        let err = OfflineQueueError::Redis("connection refused".to_string());
+        assert_eq!(err.to_string(), "Redis error: connection refused");
+    }
+
+    #[test]
+    fn test_offline_queue_error_serialization_display() {
+        let err = OfflineQueueError::Serialization("invalid format".to_string());
+        assert_eq!(err.to_string(), "Serialization error: invalid format");
+    }
+
+    #[test]
+    fn test_offline_queue_error_debug() {
+        let err = OfflineQueueError::Redis("test".to_string());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("Redis"));
+        assert!(debug.contains("test"));
+    }
 }

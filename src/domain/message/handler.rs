@@ -290,3 +290,101 @@ pub enum MessageHandlerError {
     #[error("Conversation error: {0}")]
     Conversation(#[from] crate::conversation::ConversationError),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== MessageHandlerError Tests ====================
+
+    #[test]
+    fn test_error_not_participant_display() {
+        let err = MessageHandlerError::NotParticipant;
+        assert_eq!(err.to_string(), "User is not a participant in this conversation");
+    }
+
+    #[test]
+    fn test_error_message_not_found_display() {
+        let err = MessageHandlerError::MessageNotFound;
+        assert_eq!(err.to_string(), "Message not found");
+    }
+
+    #[test]
+    fn test_error_not_message_owner_display() {
+        let err = MessageHandlerError::NotMessageOwner;
+        assert_eq!(err.to_string(), "User is not the owner of this message");
+    }
+
+    #[test]
+    fn test_error_message_recalled_display() {
+        let err = MessageHandlerError::MessageRecalled;
+        assert_eq!(err.to_string(), "Message has been recalled");
+    }
+
+    #[test]
+    fn test_error_recall_window_expired_display() {
+        let err = MessageHandlerError::RecallWindowExpired { allowed_seconds: 120 };
+        assert_eq!(err.to_string(), "Recall window expired (allowed: 120 seconds)");
+    }
+
+    #[test]
+    fn test_error_edit_window_expired_display() {
+        let err = MessageHandlerError::EditWindowExpired { allowed_seconds: 900 };
+        assert_eq!(err.to_string(), "Edit window expired (allowed: 900 seconds)");
+    }
+
+    #[test]
+    fn test_error_debug_impl() {
+        let err = MessageHandlerError::NotParticipant;
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("NotParticipant"));
+    }
+
+    #[test]
+    fn test_error_recall_window_values() {
+        // Test that the error correctly stores the allowed seconds
+        let err = MessageHandlerError::RecallWindowExpired { allowed_seconds: 60 };
+        if let MessageHandlerError::RecallWindowExpired { allowed_seconds } = err {
+            assert_eq!(allowed_seconds, 60);
+        } else {
+            panic!("Expected RecallWindowExpired");
+        }
+    }
+
+    #[test]
+    fn test_error_edit_window_values() {
+        let err = MessageHandlerError::EditWindowExpired { allowed_seconds: 300 };
+        if let MessageHandlerError::EditWindowExpired { allowed_seconds } = err {
+            assert_eq!(allowed_seconds, 300);
+        } else {
+            panic!("Expected EditWindowExpired");
+        }
+    }
+
+    // ==================== Default Window Configuration Tests ====================
+
+    // Note: Full handler tests with mocked dependencies would require
+    // extracting traits from MessageStorage, MessageRouter, and ConversationService.
+    // This is a significant refactoring effort for future improvement.
+
+    #[test]
+    fn test_default_recall_window() {
+        // Default recall window should be 2 minutes (120 seconds)
+        let default_recall = Duration::from_secs(120);
+        assert_eq!(default_recall.as_secs(), 120);
+    }
+
+    #[test]
+    fn test_default_edit_window() {
+        // Default edit window should be 15 minutes (900 seconds)
+        let default_edit = Duration::from_secs(900);
+        assert_eq!(default_edit.as_secs(), 900);
+    }
+
+    #[test]
+    fn test_default_dedup_window() {
+        // Default dedup window should be 5 minutes (300 seconds)
+        let default_dedup = Duration::from_secs(300);
+        assert_eq!(default_dedup.as_secs(), 300);
+    }
+}

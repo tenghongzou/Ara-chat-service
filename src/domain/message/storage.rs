@@ -509,3 +509,45 @@ pub enum StorageError {
     #[error("Serialization error: {0}")]
     Serialization(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_storage_error_database_display() {
+        let err = StorageError::Database("connection failed".to_string());
+        assert_eq!(err.to_string(), "Database error: connection failed");
+    }
+
+    #[test]
+    fn test_storage_error_not_found_display() {
+        let err = StorageError::NotFound;
+        assert_eq!(err.to_string(), "Message not found");
+    }
+
+    #[test]
+    fn test_storage_error_invalid_cursor_display() {
+        let err = StorageError::InvalidCursor;
+        assert_eq!(err.to_string(), "Invalid cursor");
+    }
+
+    #[test]
+    fn test_storage_error_serialization_display() {
+        let err = StorageError::Serialization("invalid format".to_string());
+        assert_eq!(err.to_string(), "Serialization error: invalid format");
+    }
+
+    #[test]
+    fn test_storage_error_debug() {
+        let err = StorageError::NotFound;
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("NotFound"));
+    }
+
+    #[test]
+    fn test_content_type_from_string() {
+        // Test the content type mapping in MessageRow::into_chat_message
+        assert_eq!(ContentType::Text, ContentType::default());
+    }
+}

@@ -216,3 +216,34 @@ pub enum RouterError {
     #[error("Cluster routing error: {0}")]
     ClusterError(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_router_error_serialization_display() {
+        let err = RouterError::Serialization("invalid JSON".to_string());
+        assert_eq!(err.to_string(), "Serialization error: invalid JSON");
+    }
+
+    #[test]
+    fn test_router_error_conversation_display() {
+        let err = RouterError::ConversationError("not found".to_string());
+        assert_eq!(err.to_string(), "Conversation error: not found");
+    }
+
+    #[test]
+    fn test_router_error_cluster_display() {
+        let err = RouterError::ClusterError("connection refused".to_string());
+        assert_eq!(err.to_string(), "Cluster routing error: connection refused");
+    }
+
+    #[test]
+    fn test_router_error_debug() {
+        let err = RouterError::Serialization("test".to_string());
+        let debug = format!("{:?}", err);
+        assert!(debug.contains("Serialization"));
+        assert!(debug.contains("test"));
+    }
+}
