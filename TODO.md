@@ -296,7 +296,7 @@ Project status and planned features for Ara Chat Service.
 - [x] Message export (GDPR) / 訊息匯出 *(v1.2.0)*
 - [x] User data deletion (GDPR) / 用戶資料刪除 *(v1.2.0)*
 - [x] Audit logging (GDPR) / 審計日誌 *(v1.2.0)*
-- [ ] Data backup automation / 資料備份自動化
+- [x] Data backup automation / 資料備份自動化 *(v1.14.0)*
 
 #### Performance / 效能
 - [x] Message compression / 訊息壓縮 *(v1.10.0)*
@@ -318,7 +318,7 @@ Project status and planned features for Ara Chat Service.
 
 ### Performance / 效能
 - [x] Full-text search lacks dedicated index / 全文搜尋缺少專用索引 *(Fixed in v1.0.3)*
-- [ ] pg_partman not auto-initialized / pg_partman 未自動初始化
+- [x] pg_partman auto-initialization / pg_partman 自動初始化 *(Fixed in v1.13.0)*
 
 ### Documentation / 文檔
 - [x] API versioning strategy / API 版本策略 *(Added in v1.12.0)*
@@ -383,6 +383,12 @@ Project status and planned features for Ara Chat Service.
 - ~~API versioning strategy~~ *(Completed: path-based REST versioning, WebSocket capability negotiation, deprecation policy, backward compatibility guidelines, migration guide template)*
 - ~~Lazy loading for large groups~~ *(Completed: participant preview in conversation list, optimized single-query loading, paginated participant fetching, on-demand full list, role-based ordering, backward compatible)*
 
+### v1.13.0 (Completed)
+- ~~pg_partman auto-initialization~~ *(Completed: custom PostgreSQL Dockerfile with pg_partman, Docker init script, migration for partition configuration, automatic daily partition creation)*
+
+### v1.14.0 (Completed)
+- ~~Data backup automation~~ *(Completed: Docker backup service with cron scheduling, PostgreSQL pg_dump, Redis BGSAVE, S3 upload support, configurable retention, restore script)*
+
 ### v2.0.0 (Future)
 - End-to-end encryption
 - Voice messages
@@ -408,3 +414,4 @@ Last updated: 2026-01-05
 10. `014_rendering_hints.sql` - Markdown rendering hints (JSONB column)
 11. `015_custom_emojis.sql` - Custom emoji and emoji packs
 12. `016_email_notifications.sql` - Email preferences, queue, and rate limits
+13. `017_pg_partman_config.sql` - pg_partman partition configuration

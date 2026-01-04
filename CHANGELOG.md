@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.0] - 2026-01-05
+
+### Added
+- **Data Backup Automation**: Automated backup system for PostgreSQL and Redis
+  - Docker backup service with cron scheduling (default: daily at 2 AM UTC)
+  - PostgreSQL backup using `pg_dump` with custom format and compression
+  - Redis backup via `BGSAVE` with RDB snapshot export
+  - Configurable backup retention policy (default: 7 days)
+  - Optional S3/MinIO upload for off-site backup storage
+  - SHA256 checksum generation for backup integrity verification
+  - Restore script with database recreation and pg_partman support
+  - Backup report generation with size and file listing
+  - Environment variables for all configuration options:
+    - `BACKUP_SCHEDULE` - Cron schedule (default: "0 2 * * *")
+    - `BACKUP_RETENTION_DAYS` - Days to keep backups (default: 7)
+    - `BACKUP_ON_START` - Run backup on container start (default: false)
+    - `S3_BACKUP_ENABLED` - Enable S3 upload (default: false)
+    - `S3_BACKUP_BUCKET` - S3 bucket name
+  - Health check for cron daemon monitoring
+  - Automatic cleanup of old backups based on retention policy
+
+## [1.13.0] - 2026-01-05
+
+### Fixed
+- **pg_partman Auto-Initialization**: Automatic partition management setup on Docker startup
+  - Custom PostgreSQL Dockerfile with pg_partman extension pre-installed
+  - Docker init script (`init-partman.sh`) creates extension on first startup
+  - Migration `017_pg_partman_config.sql` configures partitioned tables:
+    - `messages` table: daily partitions, 7-day pre-creation
+    - `message_reactions` table: daily partitions, 7-day pre-creation
+  - Partitions kept indefinitely (no retention policy for permanent message storage)
+  - PostgreSQL healthcheck added to docker-compose.yml
+  - Replaces manual Rust-based partition creation task with industry-standard pg_partman
+  - Configuration via `partman.part_config` table for easy management
+
 ## [1.12.0] - 2026-01-05
 
 ### Added
@@ -302,6 +337,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 1.14.0 | 2026-01-05 | Data backup automation |
+| 1.13.0 | 2026-01-05 | pg_partman auto-initialization |
 | 1.12.0 | 2026-01-05 | API versioning strategy, lazy loading for large groups |
 | 1.11.0 | 2026-01-05 | Connection multiplexing (conversation subscription) |
 | 1.10.0 | 2026-01-05 | Message compression (zstd) |
