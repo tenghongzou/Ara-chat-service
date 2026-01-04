@@ -2,12 +2,13 @@
 
 use axum::{
     middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
     Router,
 };
 
 use crate::server::AppState;
 use super::attachment;
+use super::emoji;
 use super::gdpr;
 use super::health::{
     health_check,
@@ -74,6 +75,18 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/gdpr/export/{id}", get(gdpr::get_export_status))
         .route("/api/v1/gdpr/data", delete(gdpr::request_deletion))
         .route("/api/v1/gdpr/audit", get(gdpr::get_audit_log))
+        // REST API - Custom Emojis
+        .route("/api/v1/emojis", post(emoji::upload_emoji))
+        .route("/api/v1/emojis", get(emoji::list_emojis))
+        .route("/api/v1/emojis/search", get(emoji::search_emojis))
+        .route("/api/v1/emojis/{id}", get(emoji::get_emoji))
+        .route("/api/v1/emojis/{id}", delete(emoji::delete_emoji))
+        // REST API - Emoji Packs
+        .route("/api/v1/emoji-packs", post(emoji::create_pack))
+        .route("/api/v1/emoji-packs", get(emoji::list_packs))
+        .route("/api/v1/emoji-packs/{id}", get(emoji::get_pack))
+        .route("/api/v1/emoji-packs/{id}", patch(emoji::update_pack))
+        .route("/api/v1/emoji-packs/{id}", delete(emoji::delete_pack))
         // Apply middleware
         .layer(middleware::from_fn(request_id_middleware))
         .with_state(state)

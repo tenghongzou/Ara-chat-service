@@ -13,6 +13,7 @@ use crate::cluster::{ClusterRouter, MemorySessionStore, RedisSessionStore, Sessi
 use crate::config::Settings;
 use crate::connection::{ConnectionLimits, ConnectionManager};
 use crate::conversation::ConversationService;
+use crate::emoji::EmojiService;
 use crate::gdpr::{GdprService, GdprServiceConfig};
 use crate::link_preview::LinkPreviewService;
 use crate::message::{MessageHandler, MessageRouter, MessageStorage, OfflineQueue};
@@ -50,6 +51,7 @@ pub struct AppState {
     pub gdpr_service: Option<Arc<GdprService>>,
     pub blocking_service: Option<Arc<BlockingService>>,
     pub link_preview_service: Option<Arc<LinkPreviewService>>,
+    pub emoji_service: Option<Arc<EmojiService>>,
     pub start_time: Instant,
 }
 
@@ -91,6 +93,7 @@ impl AppState {
             gdpr_service: None,
             blocking_service: None,
             link_preview_service: None,
+            emoji_service: None,
             start_time: Instant::now(),
         })
     }
@@ -337,6 +340,15 @@ impl AppState {
             None
         };
 
+        // Create emoji service (only if PostgreSQL is available)
+        let emoji_service = if let Some(ref pg_pool) = postgres_pool {
+            let sqlx_pool: Arc<PgPool> = Arc::new(pg_pool.pool().clone());
+            tracing::info!("Emoji service initialized");
+            Some(Arc::new(EmojiService::from_settings(sqlx_pool, &settings.file_storage)))
+        } else {
+            None
+        };
+
         Ok(Self {
             settings: Arc::new(settings),
             jwt_validator,
@@ -361,6 +373,7 @@ impl AppState {
             gdpr_service,
             blocking_service,
             link_preview_service,
+            emoji_service,
             start_time: Instant::now(),
         })
     }

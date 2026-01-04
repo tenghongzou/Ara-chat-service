@@ -33,6 +33,7 @@ pub use domain::blocking;
 pub use domain::cluster;
 pub use domain::connection;
 pub use domain::conversation;
+pub use domain::emoji;
 pub use domain::gdpr;
 pub use domain::link_preview;
 pub use domain::markdown;

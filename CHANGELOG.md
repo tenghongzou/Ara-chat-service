@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Custom Emoji Support**: User-uploaded custom emojis with pack management
+  - Upload custom emoji images (PNG, GIF, WebP)
+  - Emoji packs for grouping related emojis
+  - Shortcode format (`:emoji_name:`) with 2-50 char alphanumeric+underscore
+  - Search emojis by name or shortcode
+  - 64x64 thumbnail generation
+  - Content hash deduplication (SHA256)
+  - Max 256KB per emoji, auto-resize to 128x128 max
+  - Tenant-scoped emojis for multi-tenant isolation
+  - GIF animation preservation
+  - REST API endpoints:
+    - `POST /api/v1/emojis` - Upload custom emoji
+    - `GET /api/v1/emojis` - List custom emojis
+    - `GET /api/v1/emojis/search` - Search emojis
+    - `GET /api/v1/emojis/{id}` - Get emoji details
+    - `DELETE /api/v1/emojis/{id}` - Delete emoji
+    - `POST /api/v1/emoji-packs` - Create pack
+    - `GET /api/v1/emoji-packs` - List packs
+    - `GET /api/v1/emoji-packs/{id}` - Get pack with emojis
+    - `PATCH /api/v1/emoji-packs/{id}` - Update pack
+    - `DELETE /api/v1/emoji-packs/{id}` - Delete pack
+  - Database migration: `015_custom_emojis.sql`
 - **Markdown Rendering Hints**: Position-based formatting hints for client-side rendering
   - Parse markdown content synchronously on message send
   - Support for bold, italic, inline code, code blocks (with language)
@@ -186,3 +208,4 @@ Current migrations:
 8. `012_message_forwarding.sql` - Message forwarding support
 9. `013_link_previews.sql` - Link preview metadata storage
 10. `014_rendering_hints.sql` - Markdown rendering hints (JSONB column)
+11. `015_custom_emojis.sql` - Custom emoji and emoji packs

@@ -173,6 +173,28 @@ Project status and planned features for Ara Chat Service.
 - [x] Fast pre-filter for plain text / 純文字快速預過濾
 - [x] Database migration: `014_rendering_hints.sql`
 
+### Custom Emoji Support / 自訂表情支援 *(v1.8.0)*
+- [x] Upload custom emoji images (PNG/GIF/WebP) / 上傳自訂表情圖片
+- [x] Emoji packs for grouping related emojis / 表情包分組
+- [x] Shortcode format (:emoji_name:) / 短代碼格式
+- [x] Search emojis by name/shortcode / 按名稱/短代碼搜尋
+- [x] 64x64 thumbnail generation / 64x64 縮圖生成
+- [x] Content hash deduplication / 內容雜湊去重
+- [x] Max 256KB per emoji, 128x128 max dimension / 每個表情最大 256KB，128x128 尺寸
+- [x] Tenant-scoped emojis / 租戶範圍表情
+- [x] REST API endpoints / REST API 端點
+  - `POST /api/v1/emojis` - Upload emoji
+  - `GET /api/v1/emojis` - List emojis
+  - `GET /api/v1/emojis/search` - Search emojis
+  - `GET /api/v1/emojis/{id}` - Get emoji
+  - `DELETE /api/v1/emojis/{id}` - Delete emoji
+  - `POST /api/v1/emoji-packs` - Create pack
+  - `GET /api/v1/emoji-packs` - List packs
+  - `GET /api/v1/emoji-packs/{id}` - Get pack with emojis
+  - `PATCH /api/v1/emoji-packs/{id}` - Update pack
+  - `DELETE /api/v1/emoji-packs/{id}` - Delete pack
+- [x] Database migration: `015_custom_emojis.sql`
+
 ---
 
 ## Planned Features / 計劃中功能
@@ -225,7 +247,7 @@ Project status and planned features for Ara Chat Service.
 #### UI/UX Support / UI/UX 支援
 - [x] Link preview generation / 連結預覽 *(v1.6.0)*
 - [x] Markdown rendering hints / Markdown 渲染提示 *(v1.7.0)*
-- [ ] Custom emoji support / 自訂表情支援
+- [x] Custom emoji support / 自訂表情支援 *(v1.8.0)*
 
 ---
 
@@ -286,6 +308,9 @@ Project status and planned features for Ara Chat Service.
 ### v1.7.0 (Completed)
 - ~~Markdown rendering hints~~ *(Completed: position-based spans, bold/italic/code/links/headings/code blocks/strikethrough/blockquotes/lists, JSONB storage, 318 tests passing)*
 
+### v1.8.0 (Completed)
+- ~~Custom emoji support~~ *(Completed: emoji upload with PNG/GIF/WebP support, emoji packs, shortcode system, search, 64x64 thumbnails, content hash deduplication, REST API)*
+
 ### v2.0.0 (Future)
 - End-to-end encryption
 - Voice messages
@@ -309,3 +334,4 @@ Last updated: 2026-01-04
 8. `012_message_forwarding.sql` - Message forwarding support
 9. `013_link_previews.sql` - Link preview metadata storage
 10. `014_rendering_hints.sql` - Markdown rendering hints (JSONB column)
+11. `015_custom_emojis.sql` - Custom emoji and emoji packs

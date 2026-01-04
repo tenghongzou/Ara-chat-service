@@ -5,6 +5,7 @@ pub mod blocking;
 pub mod cluster;
 pub mod connection;
 pub mod conversation;
+pub mod emoji;
 pub mod gdpr;
 pub mod link_preview;
 pub mod markdown;

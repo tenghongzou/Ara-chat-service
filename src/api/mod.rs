@@ -1,6 +1,7 @@
 //! API layer - HTTP and WebSocket endpoints
 
 mod attachment;
+mod emoji;
 mod error;
 mod gdpr;
 mod health;
