@@ -15,7 +15,8 @@ use uuid::Uuid;
 use crate::auth::Claims;
 use crate::connection::Connection;
 use crate::domain::validation::{limits, sanitize_message_content, sanitize_conversation_name};
-use crate::message::{ClientMessage, OutboundMessage, ServerMessage};
+use crate::message::{ClientMessage, OutboundMessage, ReactionAction, ServerMessage};
+use crate::notification::NotificationPayload;
 use crate::server::AppState;
 
 #[derive(Deserialize)]
@@ -746,6 +747,28 @@ async fn handle_toggle_reaction(
                                 outbound.clone(),
                                 update.clone(),
                             ).await;
+                        }
+                    }
+                }
+            }
+
+            // Send push notification for reaction adds
+            if action == ReactionAction::Add {
+                if let Some(ref publisher) = state.notification_publisher {
+                    // Get message author from storage
+                    if let Some(ref storage) = state.message_storage {
+                        if let Ok(Some(message)) = storage.get_message(message_id).await {
+                            // Only notify if the message author is not the reactor
+                            if message.sender_id != user_id {
+                                let payload = NotificationPayload::reaction(
+                                    conversation_id,
+                                    message_id,
+                                    user_id,
+                                    emoji,
+                                    "add",
+                                );
+                                publisher.notify_reaction(message.sender_id, payload).await;
+                            }
                         }
                     }
                 }

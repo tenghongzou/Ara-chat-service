@@ -29,6 +29,8 @@ pub struct Settings {
     pub cors: CorsSettings,
     #[serde(default)]
     pub file_storage: FileStorageSettings,
+    #[serde(default)]
+    pub notification: NotificationSettings,
 }
 
 fn default_host() -> String {
@@ -329,6 +331,50 @@ fn default_local_path() -> String {
     "./uploads".to_string()
 }
 
+/// Notification service integration settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct NotificationSettings {
+    /// Enable push notifications via Redis Pub/Sub
+    #[serde(default = "default_notification_enabled")]
+    pub enabled: bool,
+    /// TTL for notification messages in seconds
+    #[serde(default = "default_notification_ttl")]
+    pub ttl_seconds: u32,
+    /// Send notifications for new messages (to offline users)
+    #[serde(default = "default_true")]
+    pub notify_new_messages: bool,
+    /// Send notifications for @mentions
+    #[serde(default = "default_true")]
+    pub notify_mentions: bool,
+    /// Send notifications for emoji reactions
+    #[serde(default = "default_true")]
+    pub notify_reactions: bool,
+}
+
+impl Default for NotificationSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_notification_enabled(),
+            ttl_seconds: default_notification_ttl(),
+            notify_new_messages: true,
+            notify_mentions: true,
+            notify_reactions: true,
+        }
+    }
+}
+
+fn default_notification_enabled() -> bool {
+    true
+}
+
+fn default_notification_ttl() -> u32 {
+    3600 // 1 hour
+}
+
+fn default_true() -> bool {
+    true
+}
+
 impl Settings {
     /// Create minimal settings for testing (no external dependencies)
     #[cfg(any(test, feature = "test-utils"))]
@@ -365,6 +411,7 @@ impl Settings {
             otel: OtelSettings::default(),
             cors: CorsSettings::default(),
             file_storage: FileStorageSettings::default(),
+            notification: NotificationSettings::default(),
         }
     }
 

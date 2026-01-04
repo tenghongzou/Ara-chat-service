@@ -8,12 +8,14 @@ use super::types::{ChatMessage, OutboundMessage, ServerMessage};
 use crate::cluster::ClusterRouter;
 use crate::connection::ConnectionManager;
 use crate::conversation::ConversationService;
+use crate::notification::{NotificationPayload, NotificationPublisher};
 
 /// Routes messages to conversation participants
 pub struct MessageRouter {
     connection_manager: Arc<ConnectionManager>,
     cluster_router: Option<Arc<ClusterRouter>>,
     conversation_service: Arc<ConversationService>,
+    notification_publisher: Option<Arc<NotificationPublisher>>,
 }
 
 impl MessageRouter {
@@ -26,7 +28,14 @@ impl MessageRouter {
             connection_manager,
             cluster_router,
             conversation_service,
+            notification_publisher: None,
         }
+    }
+
+    /// Set notification publisher for push notifications to offline users
+    pub fn with_notification_publisher(mut self, publisher: Arc<NotificationPublisher>) -> Self {
+        self.notification_publisher = Some(publisher);
+        self
     }
 
     /// Route a message to all participants in the conversation
@@ -43,6 +52,9 @@ impl MessageRouter {
         };
         let outbound = OutboundMessage::preserialized(&server_message)
             .map_err(|e| RouterError::Serialization(e.to_string()))?;
+
+        // Track offline users for push notifications
+        let mut offline_users: Vec<Uuid> = Vec::new();
 
         // Send to each participant
         for user_id in participants {
@@ -61,8 +73,27 @@ impl MessageRouter {
                     outbound.clone(),
                     server_message.clone(),
                 ).await.map_err(|e| RouterError::ClusterError(e.to_string()))?;
+            } else {
+                // User is not on local node and no cluster mode - they're offline
+                offline_users.push(user_id);
             }
-            // If no cluster router and user not local, message will be delivered when they reconnect
+        }
+
+        // Send push notifications to offline users
+        if !offline_users.is_empty() {
+            if let Some(ref publisher) = self.notification_publisher {
+                let content_preview: String = message.content.chars().take(100).collect();
+                let payload = NotificationPayload::new_message(
+                    message.conversation_id,
+                    message.id,
+                    message.sender_id,
+                    Some(content_preview),
+                );
+
+                for user_id in offline_users {
+                    publisher.notify_new_message(user_id, payload.clone()).await;
+                }
+            }
         }
 
         Ok(())

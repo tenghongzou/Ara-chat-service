@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bilingual documentation (English and Traditional Chinese)
 - Environment configuration template (`.env.example`)
 - Contributing guidelines (`CONTRIBUTING.md`)
+- **Notification Service Integration**: Push notifications via Redis Pub/Sub
+  - New message notifications for offline users
+  - @mention notifications (high priority)
+  - Emoji reaction notifications
+  - Configurable notification types via settings
+  - Channel format: `notification:user:{user_id}`
 
 ## [1.0.0] - 2026-01-03
 

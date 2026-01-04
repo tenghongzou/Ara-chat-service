@@ -46,7 +46,7 @@ Project status and planned features for Ara Chat Service.
 - [x] Structured logging / 結構化日誌
 
 ### Testing / 測試 *(v1.0.5)*
-- [x] Unit tests: 238 tests passing / 單元測試：238 項通過
+- [x] Unit tests: 253 tests passing / 單元測試：253 項通過
   - validation (sanitizer, limits, error): 33 tests
   - mention/parser: 14 tests
   - message (types, handler, router, storage, offline_queue): 89 tests
@@ -58,6 +58,7 @@ Project status and planned features for Ara Chat Service.
   - infrastructure (ratelimit, circuit_breaker, sharding): 5 tests
   - api (error, middleware): 20 tests
   - redis/fallback: 8 tests
+  - notification (types, publisher): 15 tests
 - [x] Integration tests: 24 tests passing / 整合測試：24 項通過
   - health endpoints: 6 tests
   - authentication/authorization: 12 tests
@@ -89,6 +90,13 @@ Project status and planned features for Ara Chat Service.
 - [x] Reply count tracking / 回覆計數追蹤
 - [x] ThreadUpdated WebSocket events / 即時串更新事件
 - [x] Reply target validation / 回覆目標驗證
+
+### Notification Integration / 通知整合 *(v1.2.0)*
+- [x] Redis Pub/Sub integration / Redis Pub/Sub 整合
+- [x] New message notifications (offline users) / 新訊息通知（離線用戶）
+- [x] @mention notifications / @提及通知
+- [x] Emoji reaction notifications / 表情反應通知
+- [x] Configurable notification types / 可配置通知類型
 
 ---
 
@@ -123,8 +131,7 @@ Project status and planned features for Ara Chat Service.
 - [ ] Message forwarding / 訊息轉發
 
 #### Integration / 整合
-- [ ] Notification service webhook / 通知服務 Webhook
-- [ ] Push notification support / 推送通知支援
+- [x] Notification service integration (Redis Pub/Sub) / 通知服務整合 *(v1.2.0)*
 - [ ] Email notification for offline users / 離線用戶郵件通知
 
 ### Low Priority / 低優先級
@@ -185,7 +192,7 @@ Project status and planned features for Ara Chat Service.
 
 ### v1.2.0 (In Progress)
 - ~~Message threading~~ *(Completed: thread queries, reply context, ThreadUpdated events)*
-- Notification service integration
+- ~~Notification service integration~~ *(Completed: Redis Pub/Sub, new message/mention/reaction notifications)*
 - GDPR compliance
 
 ### v2.0.0 (Future)

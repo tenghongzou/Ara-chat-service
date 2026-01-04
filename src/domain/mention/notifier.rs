@@ -7,12 +7,14 @@ use uuid::Uuid;
 use crate::message::{OfflineQueue, OutboundMessage, ServerMessage};
 use crate::connection::ConnectionManager;
 use crate::cluster::ClusterRouter;
+use crate::notification::{NotificationPayload, NotificationPublisher};
 
 /// Notifies users when they are mentioned
 pub struct MentionNotifier {
     connection_manager: Arc<ConnectionManager>,
     cluster_router: Arc<ClusterRouter>,
     offline_queue: Option<Arc<OfflineQueue>>,
+    notification_publisher: Option<Arc<NotificationPublisher>>,
 }
 
 impl MentionNotifier {
@@ -24,12 +26,19 @@ impl MentionNotifier {
             connection_manager,
             cluster_router,
             offline_queue: None,
+            notification_publisher: None,
         }
     }
 
     /// Set offline queue for storing mentions to offline users
     pub fn with_offline_queue(mut self, queue: Arc<OfflineQueue>) -> Self {
         self.offline_queue = Some(queue);
+        self
+    }
+
+    /// Set notification publisher for push notifications
+    pub fn with_notification_publisher(mut self, publisher: Arc<NotificationPublisher>) -> Self {
+        self.notification_publisher = Some(publisher);
         self
     }
 
@@ -58,7 +67,7 @@ impl MentionNotifier {
             message_id,
             sender_id,
             sender_name: sender_name.to_string(),
-            preview,
+            preview: preview.clone(),
         };
 
         let outbound = OutboundMessage::preserialized(&message)
@@ -91,8 +100,25 @@ impl MentionNotifier {
             "Sent mention notifications"
         );
 
-        // TODO: Also send to notification service for push notifications
-        // self.notify_notification_service(mentioned_users, message).await?;
+        // Send push notifications via Notification Service
+        if let Some(ref publisher) = self.notification_publisher {
+            let payload = NotificationPayload::mention(
+                conversation_id,
+                message_id,
+                sender_id,
+                Some(sender_name.to_string()),
+                Some(preview),
+            );
+
+            // Filter out sender from notification targets
+            let notify_targets: Vec<Uuid> = mentioned_users
+                .iter()
+                .filter(|&&uid| uid != sender_id)
+                .copied()
+                .collect();
+
+            publisher.notify_mentions(&notify_targets, payload).await;
+        }
 
         Ok(())
     }

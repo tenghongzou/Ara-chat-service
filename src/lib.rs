@@ -34,6 +34,7 @@ pub use domain::connection;
 pub use domain::conversation;
 pub use domain::mention;
 pub use domain::message;
+pub use domain::notification;
 pub use domain::presence;
 pub use domain::reaction;
 pub use domain::receipt;

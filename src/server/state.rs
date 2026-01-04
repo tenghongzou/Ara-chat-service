@@ -13,12 +13,13 @@ use crate::config::Settings;
 use crate::connection::{ConnectionLimits, ConnectionManager};
 use crate::conversation::ConversationService;
 use crate::message::{MessageHandler, MessageRouter, MessageStorage, OfflineQueue};
+use crate::notification::{NotificationPublisher, NotificationPublisherConfig};
 use crate::postgres::PostgresPool;
 use crate::presence::{PresenceTracker, PresenceBroadcaster};
 use crate::ratelimit::RateLimiter;
 use crate::reaction::ReactionService;
 use crate::receipt::ReadReceiptTracker;
-use crate::redis::{RedisCache, RedisPool};
+use crate::redis::{RedisCache, RedisFallback, RedisPool};
 
 /// Application state shared across handlers
 #[derive(Clone)]
@@ -42,6 +43,7 @@ pub struct AppState {
     pub offline_queue: Arc<OfflineQueue>,
     pub circuit_breakers: Option<Arc<CircuitBreakers>>,
     pub attachment_service: Option<Arc<AttachmentService>>,
+    pub notification_publisher: Option<Arc<NotificationPublisher>>,
     pub start_time: Instant,
 }
 
@@ -79,6 +81,7 @@ impl AppState {
             offline_queue,
             circuit_breakers: None,
             attachment_service: None,
+            notification_publisher: None,
             start_time: Instant::now(),
         })
     }
@@ -189,6 +192,24 @@ impl AppState {
             None
         };
 
+        // Create notification publisher (if enabled)
+        // Must be created before MessageRouter so it can be injected
+        let notification_publisher = if settings.notification.enabled {
+            let redis_fallback = Arc::new(RedisFallback::new(redis_pool.clone()));
+            let config = NotificationPublisherConfig {
+                enabled: settings.notification.enabled,
+                ttl_seconds: settings.notification.ttl_seconds,
+                notify_new_messages: settings.notification.notify_new_messages,
+                notify_mentions: settings.notification.notify_mentions,
+                notify_reactions: settings.notification.notify_reactions,
+            };
+            tracing::info!("Notification publisher initialized");
+            Some(Arc::new(NotificationPublisher::new(redis_fallback, config)))
+        } else {
+            tracing::info!("Notification publisher disabled");
+            None
+        };
+
         // Create domain services (only if PostgreSQL is available)
         let (message_storage, conversation_service, message_handler, receipt_tracker, reaction_service) =
             if let Some(ref pg_pool) = postgres_pool {
@@ -211,14 +232,18 @@ impl AppState {
 
                 // Message handler (works with or without cluster router)
                 let handler = {
-                    let router = Arc::new(MessageRouter::new(
+                    let mut router = MessageRouter::new(
                         connection_manager.clone(),
                         cluster_router.clone(),
                         conv_service.clone(),
-                    ));
+                    );
+                    // Inject notification publisher for offline user notifications
+                    if let Some(ref publisher) = notification_publisher {
+                        router = router.with_notification_publisher(publisher.clone());
+                    }
                     Some(Arc::new(MessageHandler::new(
                         storage.clone(),
-                        router,
+                        Arc::new(router),
                         conv_service.clone(),
                     )))
                 };
@@ -273,6 +298,7 @@ impl AppState {
             offline_queue,
             circuit_breakers,
             attachment_service,
+            notification_publisher,
             start_time: Instant::now(),
         })
     }
