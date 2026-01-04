@@ -127,6 +127,28 @@ Project status and planned features for Ara Chat Service.
   - `DELETE /api/v1/conversations/{id}/mute`
   - `GET /api/v1/conversations/muted`
 
+### User Blocking / 用戶封鎖 *(v1.4.0)*
+- [x] Block/unblock users / 封鎖/解除封鎖用戶
+- [x] Bidirectional DM blocking / 雙向私訊封鎖
+- [x] Message filtering for blocked users / 封鎖用戶訊息過濾
+- [x] Presence hiding for blocked users / 封鎖用戶在線狀態隱藏
+- [x] Blocked users list / 封鎖用戶列表
+- [x] WebSocket: BlockUser, UnblockUser, GetBlockedUsers / WebSocket 訊息
+- [x] REST API endpoints / REST API 端點
+  - `POST /api/v1/users/{id}/block`
+  - `DELETE /api/v1/users/{id}/block`
+  - `GET /api/v1/blocked-users`
+
+### Message Forwarding / 訊息轉發 *(v1.5.0)*
+- [x] Forward messages to one or more conversations / 轉發訊息到一個或多個對話
+- [x] Batch forwarding (max 10 targets) / 批次轉發（最多 10 個目標）
+- [x] Original message metadata preservation / 保留原始訊息元資料
+- [x] Block check for DM conversations / 私訊對話封鎖檢查
+- [x] WebSocket: ForwardMessage / WebSocket 訊息
+- [x] REST API endpoint / REST API 端點
+  - `POST /api/v1/messages/{id}/forward`
+- [x] Database migration: `012_message_forwarding.sql`
+
 ---
 
 ## Planned Features / 計劃中功能
@@ -156,8 +178,8 @@ Project status and planned features for Ara Chat Service.
 - [x] Message threading (replies) / 訊息串（回覆） *(v1.2.0)*
 - [x] Message pinning / 訊息置頂 *(v1.3.0)*
 - [x] Conversation muting / 對話靜音 *(v1.3.0)*
-- [ ] User blocking / 用戶封鎖
-- [ ] Message forwarding / 訊息轉發
+- [x] User blocking / 用戶封鎖 *(v1.4.0)*
+- [x] Message forwarding / 訊息轉發 *(v1.5.0)*
 
 #### Integration / 整合
 - [x] Notification service integration (Redis Pub/Sub) / 通知服務整合 *(v1.2.0)*
@@ -228,6 +250,12 @@ Project status and planned features for Ara Chat Service.
 - ~~Message pinning~~ *(Completed: pin/unpin, pinned list, real-time notifications, REST API)*
 - ~~Conversation muting~~ *(Completed: mute/unmute, skip push notifications, @mentions override, REST API)*
 
+### v1.4.0 (Completed)
+- ~~User blocking~~ *(Completed: block/unblock, bidirectional DM blocking, message filtering, REST API)*
+
+### v1.5.0 (Completed)
+- ~~Message forwarding~~ *(Completed: forward to multiple conversations, batch forwarding, metadata preservation, block check)*
+
 ### v2.0.0 (Future)
 - End-to-end encryption
 - Voice messages
@@ -236,3 +264,16 @@ Project status and planned features for Ara Chat Service.
 ---
 
 Last updated: 2026-01-04
+
+---
+
+## Database Migrations / 資料庫遷移
+
+1. `001_conversations.sql` - Conversations and participants
+2. `002_messages.sql` - Messages with partitioning
+3. `003_reactions.sql` - Emoji reactions
+4. `004_read_receipts.sql` - Read receipt tracking
+5. `009_message_pins.sql` - Message pinning support
+6. `010_conversation_muting.sql` - Conversation muting support
+7. `011_user_blocking.sql` - User blocking support
+8. `012_message_forwarding.sql` - Message forwarding support

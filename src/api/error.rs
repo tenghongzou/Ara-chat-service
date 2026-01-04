@@ -10,6 +10,7 @@ use axum::{
 use serde::Serialize;
 
 use crate::infrastructure::auth::JwtError;
+use crate::domain::blocking::BlockingError;
 use crate::domain::conversation::ConversationError;
 use crate::domain::message::{MessageHandlerError, RouterError, StorageError};
 use crate::domain::validation::ValidationError;
@@ -52,11 +53,14 @@ pub enum ApiError {
     Forbidden(&'static str),
     NotParticipant,
     NotOwner,
+    UserBlocked,
+    CannotBlockSelf,
 
     // Not found errors (404)
     NotFound(&'static str),
     MessageNotFound,
     ConversationNotFound,
+    BlockNotFound,
 
     // Validation errors (400)
     BadRequest(&'static str, String),
@@ -91,9 +95,12 @@ impl ApiError {
             Self::Forbidden(_) => "FORBIDDEN",
             Self::NotParticipant => "NOT_PARTICIPANT",
             Self::NotOwner => "NOT_OWNER",
+            Self::UserBlocked => "USER_BLOCKED",
+            Self::CannotBlockSelf => "CANNOT_BLOCK_SELF",
             Self::NotFound(_) => "NOT_FOUND",
             Self::MessageNotFound => "MESSAGE_NOT_FOUND",
             Self::ConversationNotFound => "CONVERSATION_NOT_FOUND",
+            Self::BlockNotFound => "BLOCK_NOT_FOUND",
             Self::BadRequest(code, _) => code,
             Self::Validation(v) => v.code(),
             Self::InvalidReplyTarget => "INVALID_REPLY_TARGET",
@@ -116,8 +123,10 @@ impl ApiError {
     pub fn status_code(&self) -> StatusCode {
         match self {
             Self::Unauthorized(_) | Self::InvalidToken(_) => StatusCode::UNAUTHORIZED,
-            Self::Forbidden(_) | Self::NotParticipant | Self::NotOwner => StatusCode::FORBIDDEN,
-            Self::NotFound(_) | Self::MessageNotFound | Self::ConversationNotFound => {
+            Self::Forbidden(_) | Self::NotParticipant | Self::NotOwner | Self::UserBlocked | Self::CannotBlockSelf => {
+                StatusCode::FORBIDDEN
+            }
+            Self::NotFound(_) | Self::MessageNotFound | Self::ConversationNotFound | Self::BlockNotFound => {
                 StatusCode::NOT_FOUND
             }
             Self::BadRequest(_, _) | Self::Validation(_) | Self::InvalidReplyTarget => StatusCode::BAD_REQUEST,
@@ -139,9 +148,12 @@ impl ApiError {
             Self::Forbidden(msg) => msg.to_string(),
             Self::NotParticipant => "User is not a participant in this conversation".to_string(),
             Self::NotOwner => "User is not the owner of this resource".to_string(),
+            Self::UserBlocked => "Action blocked due to user block".to_string(),
+            Self::CannotBlockSelf => "Cannot block yourself".to_string(),
             Self::NotFound(msg) => msg.to_string(),
             Self::MessageNotFound => "Message not found".to_string(),
             Self::ConversationNotFound => "Conversation not found".to_string(),
+            Self::BlockNotFound => "Block not found".to_string(),
             Self::BadRequest(_, msg) => msg.clone(),
             Self::Validation(v) => v.to_string(),
             Self::InvalidReplyTarget => "Invalid reply target: message not found, deleted, or in different conversation".to_string(),
@@ -228,9 +240,24 @@ impl From<MessageHandlerError> for ApiError {
             },
             MessageHandlerError::InvalidReplyTarget => Self::InvalidReplyTarget,
             MessageHandlerError::InsufficientPinPermission => Self::Forbidden("Insufficient permission to pin/unpin messages"),
+            MessageHandlerError::CannotForwardRecalled => Self::BadRequest("CANNOT_FORWARD_RECALLED", "Cannot forward recalled message".to_string()),
+            MessageHandlerError::TooManyForwardTargets { max } => Self::BadRequest("TOO_MANY_TARGETS", format!("Maximum {} target conversations allowed", max)),
+            MessageHandlerError::NoValidTargets => Self::BadRequest("NO_VALID_TARGETS", "No valid forward targets".to_string()),
             MessageHandlerError::Storage(e) => Self::from(e),
             MessageHandlerError::Routing(e) => Self::from(e),
             MessageHandlerError::Conversation(e) => Self::from(e),
+        }
+    }
+}
+
+impl From<BlockingError> for ApiError {
+    fn from(err: BlockingError) -> Self {
+        match err {
+            BlockingError::CannotBlockSelf => Self::CannotBlockSelf,
+            BlockingError::BlockNotFound => Self::BlockNotFound,
+            BlockingError::AlreadyBlocked => Self::Conflict("User is already blocked"),
+            BlockingError::UserNotFound => Self::NotFound("User not found"),
+            BlockingError::Database(e) => Self::Internal(e.to_string()),
         }
     }
 }

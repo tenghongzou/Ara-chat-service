@@ -7,6 +7,7 @@ use sqlx::PgPool;
 
 use crate::attachment::AttachmentService;
 use crate::auth::{JwtError, JwtValidator};
+use crate::blocking::BlockingService;
 use crate::circuit_breaker::CircuitBreakers;
 use crate::cluster::{ClusterRouter, MemorySessionStore, RedisSessionStore, SessionStore};
 use crate::config::Settings;
@@ -46,6 +47,7 @@ pub struct AppState {
     pub attachment_service: Option<Arc<AttachmentService>>,
     pub notification_publisher: Option<Arc<NotificationPublisher>>,
     pub gdpr_service: Option<Arc<GdprService>>,
+    pub blocking_service: Option<Arc<BlockingService>>,
     pub start_time: Instant,
 }
 
@@ -85,6 +87,7 @@ impl AppState {
             attachment_service: None,
             notification_publisher: None,
             gdpr_service: None,
+            blocking_service: None,
             start_time: Instant::now(),
         })
     }
@@ -213,6 +216,20 @@ impl AppState {
             None
         };
 
+        // Create blocking service (only if PostgreSQL is available)
+        // Must be created before MessageRouter so it can be injected
+        // TODO: Add tenant_id to Settings when multi-tenancy is implemented
+        let blocking_service = if let Some(ref pg_pool) = postgres_pool {
+            let sqlx_pool: Arc<PgPool> = Arc::new(pg_pool.pool().clone());
+            tracing::info!("Blocking service initialized");
+            Some(Arc::new(BlockingService::new(
+                sqlx_pool,
+                "default".to_string(),
+            )))
+        } else {
+            None
+        };
+
         // Create domain services (only if PostgreSQL is available)
         let (message_storage, conversation_service, message_handler, receipt_tracker, reaction_service) =
             if let Some(ref pg_pool) = postgres_pool {
@@ -243,6 +260,10 @@ impl AppState {
                     // Inject notification publisher for offline user notifications
                     if let Some(ref publisher) = notification_publisher {
                         router = router.with_notification_publisher(publisher.clone());
+                    }
+                    // Inject blocking service for filtering blocked users
+                    if let Some(ref blocking) = blocking_service {
+                        router = router.with_blocking_service(blocking.clone());
                     }
                     Some(Arc::new(MessageHandler::new(
                         storage.clone(),
@@ -326,6 +347,7 @@ impl AppState {
             attachment_service,
             notification_publisher,
             gdpr_service,
+            blocking_service,
             start_time: Instant::now(),
         })
     }

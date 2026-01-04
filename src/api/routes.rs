@@ -60,6 +60,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/conversations/{id}/mute", post(rest::mute_conversation))
         .route("/api/v1/conversations/{id}/mute", delete(rest::unmute_conversation))
         .route("/api/v1/conversations/muted", get(rest::get_muted_conversations))
+        // REST API - User Blocking
+        .route("/api/v1/users/{id}/block", post(rest::block_user))
+        .route("/api/v1/users/{id}/block", delete(rest::unblock_user))
+        .route("/api/v1/blocked-users", get(rest::get_blocked_users))
+        // REST API - Message Forwarding
+        .route("/api/v1/messages/{id}/forward", post(rest::forward_message))
         // REST API - GDPR Compliance
         .route("/api/v1/gdpr/export", post(gdpr::request_export))
         .route("/api/v1/gdpr/export/{id}", get(gdpr::get_export_status))

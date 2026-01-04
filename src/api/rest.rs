@@ -1153,3 +1153,278 @@ pub async fn get_muted_conversations(
         }
     }
 }
+
+// ==================== User Blocking Endpoints ====================
+
+/// Response for block user operation
+#[derive(Serialize)]
+pub struct BlockResponse {
+    pub user_id: Uuid,
+    pub blocked_at: i64,
+}
+
+/// Response for blocked users list
+#[derive(Serialize)]
+pub struct BlockedUsersResponse {
+    pub users: Vec<crate::blocking::BlockedUserInfo>,
+    pub count: usize,
+}
+
+/// Block a user
+/// POST /api/v1/users/{id}/block
+pub async fn block_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(target_user_id): Path<Uuid>,
+) -> Result<Json<BlockResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    // Cannot block yourself
+    if user_id == target_user_id {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                code: "CANNOT_BLOCK_SELF".to_string(),
+                message: "Cannot block yourself".to_string(),
+            }),
+        ));
+    }
+
+    let blocking_service = state.blocking_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Blocking service not available".to_string(),
+            }),
+        )
+    })?;
+
+    match blocking_service.block_user(user_id, target_user_id, None).await {
+        Ok(blocked_at) => {
+            // Unsubscribe from each other's presence
+            if let Some(ref presence) = state.presence_tracker {
+                let _ = presence.unsubscribe(user_id, &[target_user_id]).await;
+                let _ = presence.unsubscribe(target_user_id, &[user_id]).await;
+            }
+
+            Ok(Json(BlockResponse {
+                user_id: target_user_id,
+                blocked_at: blocked_at.timestamp_millis(),
+            }))
+        }
+        Err(e) => {
+            let status = match &e {
+                crate::blocking::BlockingError::CannotBlockSelf => StatusCode::BAD_REQUEST,
+                crate::blocking::BlockingError::AlreadyBlocked => StatusCode::CONFLICT,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            tracing::error!(user_id = %user_id, target_user_id = %target_user_id, error = %e, "Failed to block user");
+            Err((
+                status,
+                Json(ErrorResponse {
+                    code: "BLOCK_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+/// Unblock a user
+/// DELETE /api/v1/users/{id}/block
+pub async fn unblock_user(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(target_user_id): Path<Uuid>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let blocking_service = state.blocking_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Blocking service not available".to_string(),
+            }),
+        )
+    })?;
+
+    match blocking_service.unblock_user(user_id, target_user_id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            let status = match &e {
+                crate::blocking::BlockingError::BlockNotFound => StatusCode::NOT_FOUND,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            tracing::error!(user_id = %user_id, target_user_id = %target_user_id, error = %e, "Failed to unblock user");
+            Err((
+                status,
+                Json(ErrorResponse {
+                    code: "UNBLOCK_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+/// Get list of blocked users for the current user
+/// GET /api/v1/blocked-users
+pub async fn get_blocked_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<BlockedUsersResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let blocking_service = state.blocking_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Blocking service not available".to_string(),
+            }),
+        )
+    })?;
+
+    match blocking_service.get_blocked_users(user_id).await {
+        Ok(users) => {
+            let count = users.len();
+            Ok(Json(BlockedUsersResponse { users, count }))
+        }
+        Err(e) => {
+            tracing::error!(user_id = %user_id, error = %e, "Failed to get blocked users");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "FETCH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+// ==================== Message Forwarding Endpoints ====================
+
+/// Request to forward a message
+#[derive(Deserialize)]
+pub struct ForwardMessageRequest {
+    pub target_conversation_ids: Vec<Uuid>,
+}
+
+/// Response for forwarding a message
+#[derive(Serialize)]
+pub struct ForwardMessageResponse {
+    pub source_message_id: Uuid,
+    pub results: Vec<crate::message::ForwardResult>,
+}
+
+/// Forward a message to one or more conversations
+/// POST /api/v1/messages/{id}/forward
+pub async fn forward_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(message_id): Path<Uuid>,
+    Json(req): Json<ForwardMessageRequest>,
+) -> Result<Json<ForwardMessageResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    // Validate target count
+    if req.target_conversation_ids.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                code: "NO_TARGETS".to_string(),
+                message: "At least one target conversation is required".to_string(),
+            }),
+        ));
+    }
+
+    if req.target_conversation_ids.len() > 10 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                code: "TOO_MANY_TARGETS".to_string(),
+                message: "Maximum 10 target conversations allowed".to_string(),
+            }),
+        ));
+    }
+
+    let handler = state.message_handler.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    // Get the source message to find its conversation
+    let storage = state.message_storage.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    let source_message = storage.get_message(message_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                code: "FETCH_FAILED".to_string(),
+                message: e.to_string(),
+            }),
+        )
+    })?;
+
+    let source_conversation_id = match source_message {
+        Some(msg) => msg.conversation_id,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    code: "MESSAGE_NOT_FOUND".to_string(),
+                    message: "Message not found".to_string(),
+                }),
+            ));
+        }
+    };
+
+    match handler
+        .handle_forward_message(
+            user_id,
+            message_id,
+            source_conversation_id,
+            req.target_conversation_ids,
+        )
+        .await
+    {
+        Ok(results) => Ok(Json(ForwardMessageResponse {
+            source_message_id: message_id,
+            results,
+        })),
+        Err(e) => {
+            let status = match &e {
+                crate::message::MessageHandlerError::NotParticipant => StatusCode::FORBIDDEN,
+                crate::message::MessageHandlerError::MessageNotFound => StatusCode::NOT_FOUND,
+                crate::message::MessageHandlerError::CannotForwardRecalled => StatusCode::BAD_REQUEST,
+                crate::message::MessageHandlerError::TooManyForwardTargets { .. } => StatusCode::BAD_REQUEST,
+                crate::message::MessageHandlerError::NoValidTargets => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            tracing::error!(user_id = %user_id, message_id = %message_id, error = %e, "Failed to forward message");
+            Err((
+                status,
+                Json(ErrorResponse {
+                    code: "FORWARD_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}

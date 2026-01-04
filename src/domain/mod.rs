@@ -1,6 +1,7 @@
 //! Domain layer - business logic for chat functionality
 
 pub mod attachment;
+pub mod blocking;
 pub mod cluster;
 pub mod connection;
 pub mod conversation;

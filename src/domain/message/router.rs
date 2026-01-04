@@ -5,6 +5,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::types::{ChatMessage, OutboundMessage, ServerMessage};
+use crate::blocking::BlockingService;
 use crate::cluster::ClusterRouter;
 use crate::connection::ConnectionManager;
 use crate::conversation::ConversationService;
@@ -16,6 +17,7 @@ pub struct MessageRouter {
     cluster_router: Option<Arc<ClusterRouter>>,
     conversation_service: Arc<ConversationService>,
     notification_publisher: Option<Arc<NotificationPublisher>>,
+    blocking_service: Option<Arc<BlockingService>>,
 }
 
 impl MessageRouter {
@@ -29,6 +31,7 @@ impl MessageRouter {
             cluster_router,
             conversation_service,
             notification_publisher: None,
+            blocking_service: None,
         }
     }
 
@@ -38,9 +41,28 @@ impl MessageRouter {
         self
     }
 
+    /// Set blocking service for filtering blocked users
+    pub fn with_blocking_service(mut self, service: Arc<BlockingService>) -> Self {
+        self.blocking_service = Some(service);
+        self
+    }
+
     /// Get the connection manager reference
     pub fn connection_manager(&self) -> &Arc<ConnectionManager> {
         &self.connection_manager
+    }
+
+    /// Check if there is a blocking relationship between two users
+    /// Returns true if either user has blocked the other
+    pub async fn is_blocked(&self, user_id: Uuid, other_user_id: Uuid) -> bool {
+        if let Some(ref blocking_service) = self.blocking_service {
+            blocking_service
+                .is_mutually_blocked(user_id, other_user_id)
+                .await
+                .unwrap_or(false)
+        } else {
+            false
+        }
     }
 
     /// Route a message to all participants in the conversation
@@ -58,6 +80,17 @@ impl MessageRouter {
             .await
             .unwrap_or_default();
 
+        // Get blocked user IDs for the sender (bidirectional - includes users
+        // blocked by sender AND users who blocked the sender)
+        let blocked_users = if let Some(ref blocking_service) = self.blocking_service {
+            blocking_service
+                .get_all_blocked_user_ids(message.sender_id)
+                .await
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         // Pre-serialize the message for efficient multi-send
         let server_message = ServerMessage::Message {
             message: message.clone(),
@@ -72,6 +105,11 @@ impl MessageRouter {
         for user_id in participants {
             // Skip sender - they already have confirmation
             if user_id == message.sender_id {
+                continue;
+            }
+
+            // Skip blocked users - neither blocked nor blocker should see messages
+            if blocked_users.contains(&user_id) {
                 continue;
             }
 

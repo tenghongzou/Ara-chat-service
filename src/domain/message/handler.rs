@@ -6,7 +6,7 @@ use std::time::Duration;
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::types::{ChatMessage, ContentType, OutboundMessage, ServerMessage};
+use super::types::{ChatMessage, ContentType, ForwardedFrom, ForwardResult, OutboundMessage, ServerMessage};
 use super::storage::MessageStorage;
 use super::router::MessageRouter;
 use crate::conversation::ConversationService;
@@ -460,6 +460,223 @@ impl MessageHandler {
 
         Ok(conversations)
     }
+
+    // ==================== Forwarding Methods ====================
+
+    /// Maximum number of forward targets per request
+    pub const MAX_FORWARD_TARGETS: usize = 10;
+
+    /// Handle forward message request
+    /// Forwards a message to one or more conversations
+    pub async fn handle_forward_message(
+        &self,
+        user_id: Uuid,
+        source_message_id: Uuid,
+        source_conversation_id: Uuid,
+        target_conversation_ids: Vec<Uuid>,
+    ) -> Result<Vec<ForwardResult>, MessageHandlerError> {
+        // Validate batch size
+        if target_conversation_ids.len() > Self::MAX_FORWARD_TARGETS {
+            return Err(MessageHandlerError::TooManyForwardTargets {
+                max: Self::MAX_FORWARD_TARGETS,
+            });
+        }
+
+        if target_conversation_ids.is_empty() {
+            return Err(MessageHandlerError::NoValidTargets);
+        }
+
+        // Verify user is participant in source conversation
+        if !self.conversation_service.is_participant(source_conversation_id, user_id).await? {
+            return Err(MessageHandlerError::NotParticipant);
+        }
+
+        // Get the source message (must exist and not be recalled)
+        let source_message = self.storage
+            .get_forwardable_message(source_message_id)
+            .await?
+            .ok_or(MessageHandlerError::MessageNotFound)?;
+
+        // Verify source message is in the source conversation
+        if source_message.conversation_id != source_conversation_id {
+            return Err(MessageHandlerError::MessageNotFound);
+        }
+
+        // Cannot forward recalled messages
+        if source_message.recalled_at.is_some() {
+            return Err(MessageHandlerError::CannotForwardRecalled);
+        }
+
+        // Build forwarding metadata
+        let forwarded_from = ForwardedFrom {
+            message_id: source_message_id,
+            sender_id: source_message.sender_id,
+            conversation_id: source_conversation_id,
+        };
+
+        // Process each target conversation
+        let mut results = Vec::with_capacity(target_conversation_ids.len());
+
+        for target_conversation_id in target_conversation_ids {
+            let result = self.forward_to_conversation(
+                user_id,
+                target_conversation_id,
+                &source_message,
+                &forwarded_from,
+            ).await;
+
+            results.push(result);
+        }
+
+        // Check if all forwards failed
+        if results.iter().all(|r| !r.success) {
+            return Err(MessageHandlerError::NoValidTargets);
+        }
+
+        tracing::info!(
+            user_id = %user_id,
+            source_message_id = %source_message_id,
+            success_count = results.iter().filter(|r| r.success).count(),
+            fail_count = results.iter().filter(|r| !r.success).count(),
+            "Message forwarded"
+        );
+
+        Ok(results)
+    }
+
+    /// Forward message to a single conversation
+    async fn forward_to_conversation(
+        &self,
+        user_id: Uuid,
+        target_conversation_id: Uuid,
+        source_message: &ChatMessage,
+        forwarded_from: &ForwardedFrom,
+    ) -> ForwardResult {
+        // Check if user is participant in target conversation
+        match self.conversation_service.is_participant(target_conversation_id, user_id).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return ForwardResult {
+                    conversation_id: target_conversation_id,
+                    success: false,
+                    message_id: None,
+                    error: Some("Not a participant".to_string()),
+                };
+            }
+            Err(e) => {
+                return ForwardResult {
+                    conversation_id: target_conversation_id,
+                    success: false,
+                    message_id: None,
+                    error: Some(format!("Validation error: {}", e)),
+                };
+            }
+        }
+
+        // Check block status for DM conversations
+        if let Err(e) = self.check_dm_block_for_forward(user_id, target_conversation_id).await {
+            return ForwardResult {
+                conversation_id: target_conversation_id,
+                success: false,
+                message_id: None,
+                error: Some(e),
+            };
+        }
+
+        // Create the forwarded message
+        match self.storage.create_forwarded_message(
+            target_conversation_id,
+            user_id,
+            source_message.content.clone(),
+            source_message.content_type,
+            forwarded_from.clone(),
+        ).await {
+            Ok(forwarded_message) => {
+                // Route the message to participants
+                if let Err(e) = self.router.route_message(&forwarded_message).await {
+                    tracing::warn!(
+                        target_conversation_id = %target_conversation_id,
+                        error = %e,
+                        "Failed to route forwarded message"
+                    );
+                }
+
+                // Update conversation's last message
+                if let Err(e) = self.conversation_service
+                    .update_last_message(target_conversation_id, forwarded_message.id)
+                    .await
+                {
+                    tracing::warn!(
+                        conversation_id = %target_conversation_id,
+                        error = %e,
+                        "Failed to update conversation last message"
+                    );
+                }
+
+                ForwardResult {
+                    conversation_id: target_conversation_id,
+                    success: true,
+                    message_id: Some(forwarded_message.id),
+                    error: None,
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target_conversation_id = %target_conversation_id,
+                    error = %e,
+                    "Failed to create forwarded message"
+                );
+                ForwardResult {
+                    conversation_id: target_conversation_id,
+                    success: false,
+                    message_id: None,
+                    error: Some(format!("Storage error: {}", e)),
+                }
+            }
+        }
+    }
+
+    /// Check if forwarding to a DM conversation is blocked
+    async fn check_dm_block_for_forward(
+        &self,
+        user_id: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<(), String> {
+        // Get conversation type
+        let conversation = match self.conversation_service.get_conversation(conversation_id).await {
+            Ok(Some(c)) => c,
+            Ok(None) => return Err("Conversation not found".to_string()),
+            Err(e) => return Err(format!("Error checking conversation: {}", e)),
+        };
+
+        // Only check block status for DM conversations
+        if conversation.conversation_type != super::types::ConversationType::Direct {
+            return Ok(());
+        }
+
+        // Get the other participant
+        let participants = match self.conversation_service
+            .get_participant_ids(conversation_id)
+            .await
+        {
+            Ok(p) => p,
+            Err(e) => return Err(format!("Error getting participants: {}", e)),
+        };
+
+        // Find the other user in the DM
+        let other_user = participants.iter().find(|&&id| id != user_id);
+        let other_user_id = match other_user {
+            Some(&id) => id,
+            None => return Ok(()), // Single-user conversation, no block check needed
+        };
+
+        // Check if either user has blocked the other using the router's blocking service
+        if self.router.is_blocked(user_id, other_user_id).await {
+            return Err("Cannot forward to blocked user".to_string());
+        }
+
+        Ok(())
+    }
 }
 
 /// Message handler errors
@@ -488,6 +705,15 @@ pub enum MessageHandlerError {
 
     #[error("Insufficient permission to pin/unpin messages")]
     InsufficientPinPermission,
+
+    #[error("Cannot forward recalled message")]
+    CannotForwardRecalled,
+
+    #[error("Too many forward targets (max: {max})")]
+    TooManyForwardTargets { max: usize },
+
+    #[error("No valid forward targets")]
+    NoValidTargets,
 
     #[error("Storage error: {0}")]
     Storage(#[from] super::storage::StorageError),

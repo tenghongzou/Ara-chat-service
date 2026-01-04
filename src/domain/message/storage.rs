@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 
-use super::types::{ChatMessage, ContentType, ReplyContext, ThreadInfo};
+use super::types::{ChatMessage, ContentType, ForwardedFrom, ReplyContext, ThreadInfo};
 
 /// Message row from database
 #[derive(Debug, FromRow)]
@@ -22,10 +22,28 @@ struct MessageRow {
     reply_to_id: Option<Uuid>,
     mentions: Vec<Uuid>,
     client_message_id: Option<String>,
+    // Forwarding metadata
+    forwarded_from_message_id: Option<Uuid>,
+    forwarded_from_sender_id: Option<Uuid>,
+    forwarded_from_conversation_id: Option<Uuid>,
 }
 
 impl MessageRow {
     fn into_chat_message(self) -> ChatMessage {
+        // Build forwarded_from if all three fields are present
+        let forwarded_from = match (
+            self.forwarded_from_message_id,
+            self.forwarded_from_sender_id,
+            self.forwarded_from_conversation_id,
+        ) {
+            (Some(message_id), Some(sender_id), Some(conversation_id)) => Some(ForwardedFrom {
+                message_id,
+                sender_id,
+                conversation_id,
+            }),
+            _ => None,
+        };
+
         ChatMessage {
             id: self.id,
             conversation_id: self.conversation_id,
@@ -47,6 +65,7 @@ impl MessageRow {
             recalled_at: self.deleted_at.map(|t| t.timestamp_millis()),
             pinned_at: None,      // Loaded separately when needed
             pinned_by: None,      // Loaded separately when needed
+            forwarded_from,
         }
     }
 }
@@ -104,7 +123,8 @@ impl MessageStorage {
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING
                 id, conversation_id, sender_id, content, content_type,
-                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
             "#,
         )
         .bind(id)
@@ -143,7 +163,8 @@ impl MessageStorage {
             r#"
             SELECT
                 id, conversation_id, sender_id, content, content_type,
-                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
             FROM messages
             WHERE id = $1 AND tenant_id = $2
             "#,
@@ -204,7 +225,8 @@ impl MessageStorage {
                 r#"
                 SELECT
                     id, conversation_id, sender_id, content, content_type,
-                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
                 FROM messages
                 WHERE conversation_id = $1
                     AND tenant_id = $2
@@ -225,7 +247,8 @@ impl MessageStorage {
                 r#"
                 SELECT
                     id, conversation_id, sender_id, content, content_type,
-                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
                 FROM messages
                 WHERE conversation_id = $1 AND tenant_id = $2
                 ORDER BY created_at DESC
@@ -260,7 +283,8 @@ impl MessageStorage {
             r#"
             SELECT
                 id, conversation_id, sender_id, content, content_type,
-                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
             FROM messages
             WHERE id = ANY($1) AND tenant_id = $2
             "#,
@@ -284,7 +308,8 @@ impl MessageStorage {
             r#"
             SELECT
                 id, conversation_id, sender_id, content, content_type,
-                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
             FROM messages
             WHERE sender_id = $1 AND client_message_id = $2 AND tenant_id = $3
             ORDER BY created_at DESC
@@ -317,7 +342,8 @@ impl MessageStorage {
             WHERE id = $4 AND tenant_id = $5 AND deleted_at IS NULL
             RETURNING
                 id, conversation_id, sender_id, content, content_type,
-                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
             "#,
         )
         .bind(&new_content)
@@ -630,7 +656,8 @@ impl MessageStorage {
                 r#"
                 SELECT
                     id, conversation_id, sender_id, content, content_type,
-                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
                 FROM messages
                 WHERE reply_to_id = $1
                     AND tenant_id = $2
@@ -651,7 +678,8 @@ impl MessageStorage {
                 r#"
                 SELECT
                     id, conversation_id, sender_id, content, content_type,
-                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
                 FROM messages
                 WHERE reply_to_id = $1 AND tenant_id = $2
                 ORDER BY created_at ASC
@@ -886,7 +914,8 @@ impl MessageStorage {
             r#"
             SELECT
                 id, conversation_id, sender_id, content, content_type,
-                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
             FROM messages
             WHERE id = ANY($1) AND tenant_id = $2
             "#,
@@ -931,6 +960,96 @@ impl MessageStorage {
         .map_err(|e| StorageError::Database(e.to_string()))?;
 
         Ok(count.0)
+    }
+
+    // ==================== Forwarding-related Methods ====================
+
+    /// Create a forwarded message
+    /// This creates a new message in the target conversation with forwarding metadata
+    pub async fn create_forwarded_message(
+        &self,
+        conversation_id: Uuid,
+        sender_id: Uuid,
+        content: String,
+        content_type: ContentType,
+        forwarded_from: ForwardedFrom,
+    ) -> Result<ChatMessage, StorageError> {
+        let id = Uuid::new_v4();
+        let content_type_str = match content_type {
+            ContentType::Text => "text",
+            ContentType::Image => "image",
+            ContentType::File => "file",
+            ContentType::System => "system",
+        };
+
+        let row = sqlx::query_as::<_, MessageRow>(
+            r#"
+            INSERT INTO messages (
+                id, conversation_id, sender_id, tenant_id,
+                content, content_type, mentions,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING
+                id, conversation_id, sender_id, content, content_type,
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+            "#,
+        )
+        .bind(id)
+        .bind(conversation_id)
+        .bind(sender_id)
+        .bind(&self.tenant_id)
+        .bind(&content)
+        .bind(content_type_str)
+        .bind(&Vec::<Uuid>::new()) // Empty mentions for forwarded messages
+        .bind(forwarded_from.message_id)
+        .bind(forwarded_from.sender_id)
+        .bind(forwarded_from.conversation_id)
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        // Update conversation's last_message
+        sqlx::query(
+            r#"
+            UPDATE conversations
+            SET last_message_id = $1, last_message_at = NOW(), updated_at = NOW()
+            WHERE id = $2
+            "#,
+        )
+        .bind(id)
+        .bind(conversation_id)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.into_chat_message())
+    }
+
+    /// Get a message that can be forwarded (exists and not recalled)
+    /// Returns None if message doesn't exist or has been recalled
+    pub async fn get_forwardable_message(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Option<ChatMessage>, StorageError> {
+        let row = sqlx::query_as::<_, MessageRow>(
+            r#"
+            SELECT
+                id, conversation_id, sender_id, content, content_type,
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+            FROM messages
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(message_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.map(|r| r.into_chat_message()))
     }
 }
 

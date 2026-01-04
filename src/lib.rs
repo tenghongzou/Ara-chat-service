@@ -29,6 +29,7 @@ pub mod domain;
 
 // Re-export domain modules
 pub use domain::attachment;
+pub use domain::blocking;
 pub use domain::cluster;
 pub use domain::connection;
 pub use domain::conversation;

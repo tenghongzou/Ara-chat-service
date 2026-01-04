@@ -311,6 +311,26 @@ async fn handle_client_message(user_id: Uuid, msg: ClientMessage, state: &AppSta
             handle_unmute_conversation(user_id, conversation_id, state).await;
         }
 
+        ClientMessage::BlockUser { user_id: target_user_id } => {
+            handle_block_user(user_id, target_user_id, state).await;
+        }
+
+        ClientMessage::UnblockUser { user_id: target_user_id } => {
+            handle_unblock_user(user_id, target_user_id, state).await;
+        }
+
+        ClientMessage::GetBlockedUsers => {
+            handle_get_blocked_users(user_id, state).await;
+        }
+
+        ClientMessage::ForwardMessage {
+            message_id,
+            source_conversation_id,
+            target_conversation_ids,
+        } => {
+            handle_forward_message(user_id, message_id, source_conversation_id, target_conversation_ids, state).await;
+        }
+
         ClientMessage::Authenticate { .. } => {
             // Already authenticated via query param
             tracing::debug!(user_id = %user_id, "Re-auth attempted on authenticated connection");
@@ -1181,6 +1201,161 @@ async fn handle_unmute_conversation(
         Err(e) => {
             tracing::warn!(user_id = %user_id, error = %e, "Failed to unmute conversation");
             send_error(user_id, "UNMUTE_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+// ==================== User Blocking Handlers ====================
+
+/// Handle block user request
+async fn handle_block_user(
+    user_id: Uuid,
+    target_user_id: Uuid,
+    state: &AppState,
+) {
+    // Cannot block yourself
+    if user_id == target_user_id {
+        send_error(user_id, "CANNOT_BLOCK_SELF", "Cannot block yourself".to_string(), state).await;
+        return;
+    }
+
+    let blocking_service = match &state.blocking_service {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Blocking service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match blocking_service.block_user(user_id, target_user_id, None).await {
+        Ok(blocked_at) => {
+            // Unsubscribe from each other's presence
+            if let Some(ref presence) = state.presence_tracker {
+                let _ = presence.unsubscribe(user_id, &[target_user_id]).await;
+                let _ = presence.unsubscribe(target_user_id, &[user_id]).await;
+            }
+
+            // Send confirmation
+            let response = ServerMessage::UserBlocked {
+                user_id: target_user_id,
+                blocked_at: blocked_at.timestamp_millis(),
+            };
+            state.connection_manager.send_to_user(&user_id, response.into()).await;
+
+            tracing::info!(
+                user_id = %user_id,
+                target_user_id = %target_user_id,
+                "User blocked"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to block user");
+            send_error(user_id, "BLOCK_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+/// Handle unblock user request
+async fn handle_unblock_user(
+    user_id: Uuid,
+    target_user_id: Uuid,
+    state: &AppState,
+) {
+    let blocking_service = match &state.blocking_service {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Blocking service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match blocking_service.unblock_user(user_id, target_user_id).await {
+        Ok(()) => {
+            // Send confirmation
+            let response = ServerMessage::UserUnblocked {
+                user_id: target_user_id,
+            };
+            state.connection_manager.send_to_user(&user_id, response.into()).await;
+
+            tracing::info!(
+                user_id = %user_id,
+                target_user_id = %target_user_id,
+                "User unblocked"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to unblock user");
+            send_error(user_id, "UNBLOCK_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+/// Handle get blocked users request
+async fn handle_get_blocked_users(
+    user_id: Uuid,
+    state: &AppState,
+) {
+    let blocking_service = match &state.blocking_service {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Blocking service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match blocking_service.get_blocked_users(user_id).await {
+        Ok(users) => {
+            let response = ServerMessage::BlockedUsers { users };
+            state.connection_manager.send_to_user(&user_id, response.into()).await;
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to get blocked users");
+            send_error(user_id, "FETCH_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+// ==================== Message Forwarding Handlers ====================
+
+/// Handle forward message request
+async fn handle_forward_message(
+    user_id: Uuid,
+    message_id: Uuid,
+    source_conversation_id: Uuid,
+    target_conversation_ids: Vec<Uuid>,
+    state: &AppState,
+) {
+    let handler = match &state.message_handler {
+        Some(h) => h,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match handler.handle_forward_message(
+        user_id,
+        message_id,
+        source_conversation_id,
+        target_conversation_ids,
+    ).await {
+        Ok(results) => {
+            // Send results to the user
+            let response = ServerMessage::MessageForwarded {
+                source_message_id: message_id,
+                results,
+            };
+            state.connection_manager.send_to_user(&user_id, response.into()).await;
+
+            tracing::info!(
+                user_id = %user_id,
+                message_id = %message_id,
+                "Message forwarded"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to forward message");
+            send_error(user_id, "FORWARD_FAILED", e.to_string(), state).await;
         }
     }
 }

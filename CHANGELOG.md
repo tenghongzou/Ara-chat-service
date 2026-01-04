@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Message Forwarding**: Forward messages to one or more conversations
+  - Forward messages (up to 10 conversations per request)
+  - Preserve original message metadata (sender, conversation, content)
+  - Block check for DM conversations
+  - Real-time WebSocket notification (MessageForwarded)
+  - WebSocket client message: ForwardMessage
+  - REST API endpoint:
+    - `POST /api/v1/messages/{id}/forward` - Forward a message
+  - Database migration: `012_message_forwarding.sql`
 - OpenAPI 3.0 specification (`openapi.yaml`)
 - Bilingual documentation (English and Traditional Chinese)
 - Environment configuration template (`.env.example`)
@@ -50,6 +59,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `DELETE /api/v1/conversations/{id}/mute` - Unmute a conversation
     - `GET /api/v1/conversations/muted` - Get muted conversations
   - Database migration: `010_conversation_muting.sql`
+- **User Blocking**: Block users to prevent messaging and presence visibility
+  - Block/unblock users with persistent storage
+  - Bidirectional DM blocking (neither party can message)
+  - Message filtering in group chats (blocked users' messages hidden)
+  - Presence hiding (blocked users cannot see each other's status)
+  - Blocked users list retrieval
+  - WebSocket client messages: BlockUser, UnblockUser, GetBlockedUsers
+  - WebSocket server messages: UserBlocked, UserUnblocked, BlockedUsers
+  - REST API endpoints:
+    - `POST /api/v1/users/{id}/block` - Block a user
+    - `DELETE /api/v1/users/{id}/block` - Unblock a user
+    - `GET /api/v1/blocked-users` - Get blocked users list
+  - Database migration: `011_user_blocking.sql`
 
 ## [1.0.0] - 2026-01-03
 
@@ -140,3 +162,5 @@ Current migrations:
 4. `004_read_receipts.sql` - Read receipt tracking
 5. `009_message_pins.sql` - Message pinning support
 6. `010_conversation_muting.sql` - Conversation muting support
+7. `011_user_blocking.sql` - User blocking support
+8. `012_message_forwarding.sql` - Message forwarding support

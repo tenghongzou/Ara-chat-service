@@ -122,6 +122,29 @@ pub enum ClientMessage {
         conversation_id: Uuid,
     },
 
+    /// Block a user
+    BlockUser {
+        user_id: Uuid,
+    },
+
+    /// Unblock a user
+    UnblockUser {
+        user_id: Uuid,
+    },
+
+    /// Get list of blocked users
+    GetBlockedUsers,
+
+    /// Forward a message to one or more conversations
+    ForwardMessage {
+        /// ID of the message to forward
+        message_id: Uuid,
+        /// Source conversation ID (for validation)
+        source_conversation_id: Uuid,
+        /// Target conversation IDs to forward to (max 10)
+        target_conversation_ids: Vec<Uuid>,
+    },
+
     /// Ping for keepalive
     Ping,
 }
@@ -288,6 +311,32 @@ pub enum ServerMessage {
         conversation_id: Uuid,
     },
 
+    /// User was blocked
+    #[serde(rename = "user_blocked")]
+    UserBlocked {
+        user_id: Uuid,
+        blocked_at: i64,
+    },
+
+    /// User was unblocked
+    #[serde(rename = "user_unblocked")]
+    UserUnblocked {
+        user_id: Uuid,
+    },
+
+    /// List of blocked users
+    #[serde(rename = "blocked_users")]
+    BlockedUsers {
+        users: Vec<crate::blocking::BlockedUserInfo>,
+    },
+
+    /// Message was forwarded successfully
+    #[serde(rename = "message_forwarded")]
+    MessageForwarded {
+        source_message_id: Uuid,
+        results: Vec<ForwardResult>,
+    },
+
     /// Error response
     #[serde(rename = "error")]
     Error { code: String, message: String },
@@ -400,6 +449,9 @@ pub struct ChatMessage {
     /// User who pinned the message
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pinned_by: Option<Uuid>,
+    /// Forwarding metadata - present if this message was forwarded
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forwarded_from: Option<ForwardedFrom>,
 }
 
 /// Conversation summary for list view
@@ -514,6 +566,32 @@ impl ReplyContext {
             content_type,
         }
     }
+}
+
+/// Forwarding metadata for a forwarded message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForwardedFrom {
+    /// ID of the original message
+    pub message_id: Uuid,
+    /// Original sender ID
+    pub sender_id: Uuid,
+    /// Original conversation ID
+    pub conversation_id: Uuid,
+}
+
+/// Result of forwarding a message to a single conversation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForwardResult {
+    /// Target conversation ID
+    pub conversation_id: Uuid,
+    /// Whether the forward was successful
+    pub success: bool,
+    /// New message ID if successful
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<Uuid>,
+    /// Error message if failed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Unread sync data for REST API response
@@ -826,6 +904,7 @@ mod tests {
             recalled_at: None,
             pinned_at: None,
             pinned_by: None,
+            forwarded_from: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -839,6 +918,7 @@ mod tests {
         assert!(!json.contains("thread_info"));
         assert!(!json.contains("pinned_at"));
         assert!(!json.contains("pinned_by"));
+        assert!(!json.contains("forwarded_from"));
     }
 
     #[test]
@@ -863,6 +943,7 @@ mod tests {
             recalled_at: None,
             pinned_at: None,
             pinned_by: None,
+            forwarded_from: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
