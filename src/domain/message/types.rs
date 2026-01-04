@@ -100,6 +100,28 @@ pub enum ClientMessage {
         message_ids: Vec<Uuid>,
     },
 
+    /// Pin a message in a conversation
+    PinMessage {
+        conversation_id: Uuid,
+        message_id: Uuid,
+    },
+
+    /// Unpin a message in a conversation
+    UnpinMessage {
+        conversation_id: Uuid,
+        message_id: Uuid,
+    },
+
+    /// Mute a conversation (no push notifications)
+    MuteConversation {
+        conversation_id: Uuid,
+    },
+
+    /// Unmute a conversation
+    UnmuteConversation {
+        conversation_id: Uuid,
+    },
+
     /// Ping for keepalive
     Ping,
 }
@@ -236,6 +258,36 @@ pub enum ServerMessage {
         last_reply_sender_id: Uuid,
     },
 
+    /// Message was pinned
+    #[serde(rename = "message_pinned")]
+    MessagePinned {
+        conversation_id: Uuid,
+        message_id: Uuid,
+        pinned_by: Uuid,
+        pinned_at: i64,
+    },
+
+    /// Message was unpinned
+    #[serde(rename = "message_unpinned")]
+    MessageUnpinned {
+        conversation_id: Uuid,
+        message_id: Uuid,
+        unpinned_by: Uuid,
+    },
+
+    /// Conversation was muted by the user
+    #[serde(rename = "conversation_muted")]
+    ConversationMuted {
+        conversation_id: Uuid,
+        muted_at: i64,
+    },
+
+    /// Conversation was unmuted by the user
+    #[serde(rename = "conversation_unmuted")]
+    ConversationUnmuted {
+        conversation_id: Uuid,
+    },
+
     /// Error response
     #[serde(rename = "error")]
     Error { code: String, message: String },
@@ -342,6 +394,12 @@ pub struct ChatMessage {
     pub reactions: HashMap<String, Vec<Uuid>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recalled_at: Option<i64>,
+    /// Timestamp when message was pinned (milliseconds since epoch)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned_at: Option<i64>,
+    /// User who pinned the message
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pinned_by: Option<Uuid>,
 }
 
 /// Conversation summary for list view
@@ -359,6 +417,9 @@ pub struct ConversationSummary {
     pub last_message: Option<LastMessagePreview>,
     pub unread_count: u64,
     pub updated_at: i64,
+    /// Whether the current user has muted this conversation
+    #[serde(default)]
+    pub is_muted: bool,
 }
 
 /// Participant info in a conversation
@@ -763,6 +824,8 @@ mod tests {
             mentions: vec![],
             reactions: HashMap::new(),
             recalled_at: None,
+            pinned_at: None,
+            pinned_by: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -774,6 +837,8 @@ mod tests {
         assert!(!json.contains("recalled_at"));
         assert!(!json.contains("reply_context"));
         assert!(!json.contains("thread_info"));
+        assert!(!json.contains("pinned_at"));
+        assert!(!json.contains("pinned_by"));
     }
 
     #[test]
@@ -796,6 +861,8 @@ mod tests {
             mentions: vec![],
             reactions,
             recalled_at: None,
+            pinned_at: None,
+            pinned_by: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();

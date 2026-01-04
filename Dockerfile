@@ -20,7 +20,11 @@ RUN mkdir src && echo 'fn main() {}' > src/main.rs && \
 # Copy actual source code
 COPY src ./src
 
-# Build the actual application
+# Copy sqlx offline cache for compile-time query verification
+COPY .sqlx ./.sqlx
+
+# Build the actual application with sqlx offline mode
+ENV SQLX_OFFLINE=true
 RUN cargo build --release
 
 # Runtime stage

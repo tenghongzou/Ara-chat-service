@@ -2,6 +2,7 @@
 
 mod attachment;
 mod error;
+mod gdpr;
 mod health;
 mod middleware;
 mod routes;

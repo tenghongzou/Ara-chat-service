@@ -33,6 +33,20 @@ pub struct ConversationParticipant {
     pub left_at: Option<DateTime<Utc>>,
     pub last_read_message_id: Option<Uuid>,
     pub last_read_at: Option<DateTime<Utc>>,
+    /// Whether this user has muted the conversation (no push notifications)
+    #[serde(default)]
+    pub is_muted: bool,
+    /// When the conversation was muted
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub muted_at: Option<DateTime<Utc>>,
+}
+
+impl ConversationParticipant {
+    /// Check if this participant can pin/unpin messages
+    /// Only owners and admins have pin permissions
+    pub fn can_pin_messages(&self) -> bool {
+        matches!(self.role, ParticipantRole::Owner | ParticipantRole::Admin)
+    }
 }
 
 /// Direct message lookup entry for O(1) private chat lookups

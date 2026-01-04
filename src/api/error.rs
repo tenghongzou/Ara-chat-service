@@ -227,6 +227,7 @@ impl From<MessageHandlerError> for ApiError {
                 allowed_seconds,
             },
             MessageHandlerError::InvalidReplyTarget => Self::InvalidReplyTarget,
+            MessageHandlerError::InsufficientPinPermission => Self::Forbidden("Insufficient permission to pin/unpin messages"),
             MessageHandlerError::Storage(e) => Self::from(e),
             MessageHandlerError::Routing(e) => Self::from(e),
             MessageHandlerError::Conversation(e) => Self::from(e),

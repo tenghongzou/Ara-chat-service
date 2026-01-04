@@ -12,6 +12,7 @@ use crate::cluster::{ClusterRouter, MemorySessionStore, RedisSessionStore, Sessi
 use crate::config::Settings;
 use crate::connection::{ConnectionLimits, ConnectionManager};
 use crate::conversation::ConversationService;
+use crate::gdpr::{GdprService, GdprServiceConfig};
 use crate::message::{MessageHandler, MessageRouter, MessageStorage, OfflineQueue};
 use crate::notification::{NotificationPublisher, NotificationPublisherConfig};
 use crate::postgres::PostgresPool;
@@ -44,6 +45,7 @@ pub struct AppState {
     pub circuit_breakers: Option<Arc<CircuitBreakers>>,
     pub attachment_service: Option<Arc<AttachmentService>>,
     pub notification_publisher: Option<Arc<NotificationPublisher>>,
+    pub gdpr_service: Option<Arc<GdprService>>,
     pub start_time: Instant,
 }
 
@@ -82,6 +84,7 @@ impl AppState {
             circuit_breakers: None,
             attachment_service: None,
             notification_publisher: None,
+            gdpr_service: None,
             start_time: Instant::now(),
         })
     }
@@ -278,6 +281,29 @@ impl AppState {
             None
         };
 
+        // Create GDPR service (only if PostgreSQL is available and GDPR is enabled)
+        let gdpr_service = if let Some(ref pg_pool) = postgres_pool {
+            if settings.gdpr.enabled {
+                let sqlx_pool: Arc<PgPool> = Arc::new(pg_pool.pool().clone());
+                let config = GdprServiceConfig {
+                    enabled: settings.gdpr.enabled,
+                    export_path: std::path::PathBuf::from(&settings.gdpr.export_path),
+                    export_retention_days: settings.gdpr.export_retention_days,
+                    audit_log_retention_years: settings.gdpr.audit_log_retention_years,
+                };
+                tracing::info!(
+                    export_path = %settings.gdpr.export_path,
+                    "GDPR service initialized"
+                );
+                Some(Arc::new(GdprService::new(sqlx_pool, config)))
+            } else {
+                tracing::info!("GDPR service disabled");
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             settings: Arc::new(settings),
             jwt_validator,
@@ -299,6 +325,7 @@ impl AppState {
             circuit_breakers,
             attachment_service,
             notification_publisher,
+            gdpr_service,
             start_time: Instant::now(),
         })
     }

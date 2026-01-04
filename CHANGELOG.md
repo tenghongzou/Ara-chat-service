@@ -18,6 +18,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Emoji reaction notifications
   - Configurable notification types via settings
   - Channel format: `notification:user:{user_id}`
+- **GDPR Compliance**: Full GDPR support for user data management
+  - Data Export (Article 20 - Data Portability): Export user data to JSON
+  - Data Deletion (Article 17 - Right to Erasure): Delete or anonymize user data
+  - Audit Logging (Article 30 - Records of Processing): 7-year retention
+  - REST API endpoints:
+    - `POST /api/v1/gdpr/export` - Request data export
+    - `GET /api/v1/gdpr/export/{id}` - Get export status
+    - `DELETE /api/v1/gdpr/data` - Request data deletion
+    - `GET /api/v1/gdpr/audit` - View audit log
+  - Configurable via `CHAT__GDPR__*` environment variables
+- **Message Pinning**: Pin important messages in conversations
+  - Pin/unpin messages (Owner and Admin roles only)
+  - Fetch pinned messages list with pagination
+  - Real-time WebSocket notifications (MessagePinned, MessageUnpinned)
+  - WebSocket client messages: PinMessage, UnpinMessage
+  - REST API endpoints:
+    - `POST /api/v1/conversations/{id}/messages/{msg_id}/pin` - Pin a message
+    - `DELETE /api/v1/conversations/{id}/messages/{msg_id}/pin` - Unpin a message
+    - `GET /api/v1/conversations/{id}/pinned` - Get pinned messages
+  - Database migration: `009_message_pins.sql`
+- **Conversation Muting**: Mute conversations to skip push notifications
+  - Mute/unmute conversations (any participant)
+  - Muted users still receive WebSocket messages (real-time updates)
+  - Muted users do NOT receive push notifications
+  - @mentions override mute status (always notify)
+  - WebSocket client messages: MuteConversation, UnmuteConversation
+  - WebSocket server messages: ConversationMuted, ConversationUnmuted
+  - REST API endpoints:
+    - `POST /api/v1/conversations/{id}/mute` - Mute a conversation
+    - `DELETE /api/v1/conversations/{id}/mute` - Unmute a conversation
+    - `GET /api/v1/conversations/muted` - Get muted conversations
+  - Database migration: `010_conversation_muting.sql`
 
 ## [1.0.0] - 2026-01-03
 
@@ -106,3 +138,5 @@ Current migrations:
 2. `002_messages.sql` - Messages with partitioning
 3. `003_reactions.sql` - Emoji reactions
 4. `004_read_receipts.sql` - Read receipt tracking
+5. `009_message_pins.sql` - Message pinning support
+6. `010_conversation_muting.sql` - Conversation muting support

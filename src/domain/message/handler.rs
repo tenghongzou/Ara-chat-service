@@ -6,7 +6,7 @@ use std::time::Duration;
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::types::{ChatMessage, ContentType, ServerMessage};
+use super::types::{ChatMessage, ContentType, OutboundMessage, ServerMessage};
 use super::storage::MessageStorage;
 use super::router::MessageRouter;
 use crate::conversation::ConversationService;
@@ -289,6 +289,177 @@ impl MessageHandler {
     pub async fn get_message(&self, message_id: Uuid) -> Result<Option<ChatMessage>, MessageHandlerError> {
         Ok(self.storage.get_message(message_id).await?)
     }
+
+    /// Handle pin message request
+    /// Only owners and admins can pin messages
+    pub async fn handle_pin_message(
+        &self,
+        user_id: Uuid,
+        conversation_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<i64, MessageHandlerError> {
+        // Verify user is a participant and has permission to pin
+        let participant = self.conversation_service
+            .get_participant_info(conversation_id, user_id)
+            .await?
+            .ok_or(MessageHandlerError::NotParticipant)?;
+
+        // Check if user has permission to pin (owner or admin)
+        if !participant.can_pin_messages() {
+            return Err(MessageHandlerError::InsufficientPinPermission);
+        }
+
+        // Pin the message (storage layer validates message exists and is in conversation)
+        let pinned_at = self.storage.pin_message(message_id, conversation_id, user_id).await?;
+
+        // Notify all participants about the pin
+        self.router.route_message_pinned(
+            conversation_id,
+            message_id,
+            user_id,
+            pinned_at,
+        ).await?;
+
+        tracing::info!(
+            user_id = %user_id,
+            conversation_id = %conversation_id,
+            message_id = %message_id,
+            "Message pinned"
+        );
+
+        Ok(pinned_at)
+    }
+
+    /// Handle unpin message request
+    /// Only owners and admins can unpin messages
+    pub async fn handle_unpin_message(
+        &self,
+        user_id: Uuid,
+        conversation_id: Uuid,
+        message_id: Uuid,
+    ) -> Result<(), MessageHandlerError> {
+        // Verify user is a participant and has permission to unpin
+        let participant = self.conversation_service
+            .get_participant_info(conversation_id, user_id)
+            .await?
+            .ok_or(MessageHandlerError::NotParticipant)?;
+
+        // Check if user has permission to unpin (owner or admin)
+        if !participant.can_pin_messages() {
+            return Err(MessageHandlerError::InsufficientPinPermission);
+        }
+
+        // Unpin the message
+        let was_pinned = self.storage.unpin_message(message_id, conversation_id).await?;
+
+        if was_pinned {
+            // Notify all participants about the unpin
+            self.router.route_message_unpinned(
+                conversation_id,
+                message_id,
+                user_id,
+            ).await?;
+
+            tracing::info!(
+                user_id = %user_id,
+                conversation_id = %conversation_id,
+                message_id = %message_id,
+                "Message unpinned"
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Get pinned messages for a conversation
+    pub async fn get_pinned_messages(
+        &self,
+        user_id: Uuid,
+        conversation_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<ChatMessage>, MessageHandlerError> {
+        // Verify user is a participant
+        if !self.conversation_service.is_participant(conversation_id, user_id).await? {
+            return Err(MessageHandlerError::NotParticipant);
+        }
+
+        let messages = self.storage.get_pinned_messages(conversation_id, limit).await?;
+        Ok(messages)
+    }
+
+    // ==================== Muting Methods ====================
+
+    /// Handle mute conversation request
+    /// Any participant can mute a conversation for themselves
+    pub async fn handle_mute_conversation(
+        &self,
+        user_id: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<i64, MessageHandlerError> {
+        // Mute the conversation (service handles participant verification)
+        let muted_at = self.conversation_service
+            .mute_conversation(conversation_id, user_id)
+            .await?;
+
+        // Send confirmation to the user
+        let server_message = ServerMessage::ConversationMuted {
+            conversation_id,
+            muted_at,
+        };
+
+        if let Ok(outbound) = OutboundMessage::preserialized(&server_message) {
+            self.router.connection_manager().send_to_user(&user_id, outbound).await;
+        }
+
+        tracing::info!(
+            user_id = %user_id,
+            conversation_id = %conversation_id,
+            "Conversation muted"
+        );
+
+        Ok(muted_at)
+    }
+
+    /// Handle unmute conversation request
+    pub async fn handle_unmute_conversation(
+        &self,
+        user_id: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<(), MessageHandlerError> {
+        // Unmute the conversation (service handles participant verification)
+        self.conversation_service
+            .unmute_conversation(conversation_id, user_id)
+            .await?;
+
+        // Send confirmation to the user
+        let server_message = ServerMessage::ConversationUnmuted {
+            conversation_id,
+        };
+
+        if let Ok(outbound) = OutboundMessage::preserialized(&server_message) {
+            self.router.connection_manager().send_to_user(&user_id, outbound).await;
+        }
+
+        tracing::info!(
+            user_id = %user_id,
+            conversation_id = %conversation_id,
+            "Conversation unmuted"
+        );
+
+        Ok(())
+    }
+
+    /// Get muted conversations for a user
+    pub async fn get_muted_conversations(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<Uuid>, MessageHandlerError> {
+        let conversations = self.conversation_service
+            .get_muted_conversations(user_id)
+            .await?;
+
+        Ok(conversations)
+    }
 }
 
 /// Message handler errors
@@ -314,6 +485,9 @@ pub enum MessageHandlerError {
 
     #[error("Invalid reply target: message not found, deleted, or in different conversation")]
     InvalidReplyTarget,
+
+    #[error("Insufficient permission to pin/unpin messages")]
+    InsufficientPinPermission,
 
     #[error("Storage error: {0}")]
     Storage(#[from] super::storage::StorageError),

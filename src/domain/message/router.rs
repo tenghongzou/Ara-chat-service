@@ -38,6 +38,11 @@ impl MessageRouter {
         self
     }
 
+    /// Get the connection manager reference
+    pub fn connection_manager(&self) -> &Arc<ConnectionManager> {
+        &self.connection_manager
+    }
+
     /// Route a message to all participants in the conversation
     pub async fn route_message(&self, message: &ChatMessage) -> Result<(), RouterError> {
         // Get all participants in the conversation
@@ -46,6 +51,13 @@ impl MessageRouter {
             .await
             .map_err(|e| RouterError::ConversationError(e.to_string()))?;
 
+        // Get muted user IDs for filtering push notifications
+        // Muted users still receive WebSocket messages, just no push notifications
+        let muted_users = self.conversation_service
+            .get_muted_user_ids(message.conversation_id)
+            .await
+            .unwrap_or_default();
+
         // Pre-serialize the message for efficient multi-send
         let server_message = ServerMessage::Message {
             message: message.clone(),
@@ -53,7 +65,7 @@ impl MessageRouter {
         let outbound = OutboundMessage::preserialized(&server_message)
             .map_err(|e| RouterError::Serialization(e.to_string()))?;
 
-        // Track offline users for push notifications
+        // Track offline users for push notifications (excluding muted users)
         let mut offline_users: Vec<Uuid> = Vec::new();
 
         // Send to each participant
@@ -63,7 +75,7 @@ impl MessageRouter {
                 continue;
             }
 
-            // Try local delivery first
+            // Try local delivery first - muted users still receive WebSocket messages
             if self.connection_manager.has_user(&user_id) {
                 self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
@@ -74,12 +86,14 @@ impl MessageRouter {
                     server_message.clone(),
                 ).await.map_err(|e| RouterError::ClusterError(e.to_string()))?;
             } else {
-                // User is not on local node and no cluster mode - they're offline
-                offline_users.push(user_id);
+                // User is offline - only add to push notification list if NOT muted
+                if !muted_users.contains(&user_id) {
+                    offline_users.push(user_id);
+                }
             }
         }
 
-        // Send push notifications to offline users
+        // Send push notifications to offline users (muted users already filtered out)
         if !offline_users.is_empty() {
             if let Some(ref publisher) = self.notification_publisher {
                 let content_preview: String = message.content.chars().take(100).collect();
@@ -266,6 +280,80 @@ impl MessageRouter {
                 // Thread updates are transient, no need to queue for offline users
                 cluster_router.route_to_user(participant_id, outbound.clone()).await
                     .map_err(|e| RouterError::ClusterError(e.to_string()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Route message pinned notification to all participants
+    pub async fn route_message_pinned(
+        &self,
+        conversation_id: Uuid,
+        message_id: Uuid,
+        pinned_by: Uuid,
+        pinned_at: i64,
+    ) -> Result<(), RouterError> {
+        let participants = self.conversation_service
+            .get_participant_ids(conversation_id)
+            .await
+            .map_err(|e| RouterError::ConversationError(e.to_string()))?;
+
+        let server_message = ServerMessage::MessagePinned {
+            conversation_id,
+            message_id,
+            pinned_by,
+            pinned_at,
+        };
+        let outbound = OutboundMessage::preserialized(&server_message)
+            .map_err(|e| RouterError::Serialization(e.to_string()))?;
+
+        for participant_id in participants {
+            if self.connection_manager.has_user(&participant_id) {
+                self.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+            } else if let Some(ref cluster_router) = self.cluster_router {
+                // Pin notifications should be queued for offline users
+                cluster_router.route_to_user_with_queue(
+                    participant_id,
+                    outbound.clone(),
+                    server_message.clone(),
+                ).await.map_err(|e| RouterError::ClusterError(e.to_string()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Route message unpinned notification to all participants
+    pub async fn route_message_unpinned(
+        &self,
+        conversation_id: Uuid,
+        message_id: Uuid,
+        unpinned_by: Uuid,
+    ) -> Result<(), RouterError> {
+        let participants = self.conversation_service
+            .get_participant_ids(conversation_id)
+            .await
+            .map_err(|e| RouterError::ConversationError(e.to_string()))?;
+
+        let server_message = ServerMessage::MessageUnpinned {
+            conversation_id,
+            message_id,
+            unpinned_by,
+        };
+        let outbound = OutboundMessage::preserialized(&server_message)
+            .map_err(|e| RouterError::Serialization(e.to_string()))?;
+
+        for participant_id in participants {
+            if self.connection_manager.has_user(&participant_id) {
+                self.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+            } else if let Some(ref cluster_router) = self.cluster_router {
+                // Unpin notifications should be queued for offline users
+                cluster_router.route_to_user_with_queue(
+                    participant_id,
+                    outbound.clone(),
+                    server_message.clone(),
+                ).await.map_err(|e| RouterError::ClusterError(e.to_string()))?;
             }
         }
 

@@ -59,6 +59,8 @@ struct ParticipantRow {
     left_at: Option<DateTime<Utc>>,
     last_read_message_id: Option<Uuid>,
     last_read_at: Option<DateTime<Utc>>,
+    is_muted: bool,
+    muted_at: Option<DateTime<Utc>>,
 }
 
 /// Service for managing conversations
@@ -136,7 +138,8 @@ impl ConversationService {
     ) -> Result<Vec<ConversationParticipant>, ConversationError> {
         let rows = sqlx::query_as::<_, ParticipantRow>(
             r#"
-            SELECT conversation_id, user_id, tenant_id, role, joined_at, left_at, last_read_message_id, last_read_at
+            SELECT conversation_id, user_id, tenant_id, role, joined_at, left_at,
+                   last_read_message_id, last_read_at, is_muted, muted_at
             FROM conversation_participants
             WHERE conversation_id = $1 AND tenant_id = $2 AND left_at IS NULL
             "#,
@@ -160,6 +163,8 @@ impl ConversationService {
             left_at: r.left_at,
             last_read_message_id: r.last_read_message_id,
             last_read_at: r.last_read_at,
+            is_muted: r.is_muted,
+            muted_at: r.muted_at,
         }).collect())
     }
 
@@ -342,6 +347,12 @@ impl ConversationService {
             // Get unread count (would use Redis in production)
             let unread_count = 0u64; // TODO: Get from Redis
 
+            // Check if user has muted this conversation
+            let is_muted = participants.iter()
+                .find(|p| p.user_id == user_id)
+                .map(|p| p.is_muted)
+                .unwrap_or(false);
+
             summaries.push(ConversationSummary {
                 id: conv.id,
                 conversation_type: conv.conversation_type,
@@ -352,6 +363,7 @@ impl ConversationService {
                 last_message,
                 unread_count,
                 updated_at: conv.updated_at.timestamp_millis(),
+                is_muted,
             });
         }
 
@@ -615,6 +627,12 @@ impl ConversationService {
             None
         };
 
+        // Check if user has muted this conversation
+        let is_muted = participants.iter()
+            .find(|p| p.user_id == user_id)
+            .map(|p| p.is_muted)
+            .unwrap_or(false);
+
         Ok(Some(ConversationSummary {
             id: conv.id,
             conversation_type: conv.conversation_type,
@@ -625,6 +643,7 @@ impl ConversationService {
             last_message,
             unread_count: 0, // Will be updated by caller from Redis
             updated_at: conv.updated_at.timestamp_millis(),
+            is_muted,
         }))
     }
 
@@ -634,22 +653,10 @@ impl ConversationService {
         conversation_id: Uuid,
         user_id: Uuid,
     ) -> Result<Option<ConversationParticipant>, ConversationError> {
-        #[derive(FromRow)]
-        struct ParticipantRow {
-            conversation_id: Uuid,
-            user_id: Uuid,
-            tenant_id: String,
-            role: String,
-            joined_at: DateTime<Utc>,
-            left_at: Option<DateTime<Utc>>,
-            last_read_message_id: Option<Uuid>,
-            last_read_at: Option<DateTime<Utc>>,
-        }
-
         let row = sqlx::query_as::<_, ParticipantRow>(
             r#"
             SELECT conversation_id, user_id, tenant_id, role, joined_at, left_at,
-                   last_read_message_id, last_read_at
+                   last_read_message_id, last_read_at, is_muted, muted_at
             FROM conversation_participants
             WHERE conversation_id = $1 AND user_id = $2 AND tenant_id = $3
             "#,
@@ -674,7 +681,149 @@ impl ConversationService {
             left_at: r.left_at,
             last_read_message_id: r.last_read_message_id,
             last_read_at: r.last_read_at,
+            is_muted: r.is_muted,
+            muted_at: r.muted_at,
         }))
+    }
+
+    // ==================== Muting Methods ====================
+
+    /// Mute a conversation for a user
+    /// Returns the timestamp when muted
+    pub async fn mute_conversation(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<i64, ConversationError> {
+        // Verify user is a participant
+        if !self.is_participant(conversation_id, user_id).await? {
+            return Err(ConversationError::NotParticipant);
+        }
+
+        let now = Utc::now();
+
+        sqlx::query(
+            r#"
+            UPDATE conversation_participants
+            SET is_muted = TRUE, muted_at = $1
+            WHERE conversation_id = $2 AND user_id = $3 AND tenant_id = $4
+            "#,
+        )
+        .bind(now)
+        .bind(conversation_id)
+        .bind(user_id)
+        .bind(&self.tenant_id)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| ConversationError::Database(e.to_string()))?;
+
+        tracing::info!(
+            user_id = %user_id,
+            conversation_id = %conversation_id,
+            "Conversation muted"
+        );
+
+        Ok(now.timestamp_millis())
+    }
+
+    /// Unmute a conversation for a user
+    pub async fn unmute_conversation(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), ConversationError> {
+        // Verify user is a participant
+        if !self.is_participant(conversation_id, user_id).await? {
+            return Err(ConversationError::NotParticipant);
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE conversation_participants
+            SET is_muted = FALSE, muted_at = NULL
+            WHERE conversation_id = $1 AND user_id = $2 AND tenant_id = $3
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(user_id)
+        .bind(&self.tenant_id)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| ConversationError::Database(e.to_string()))?;
+
+        tracing::info!(
+            user_id = %user_id,
+            conversation_id = %conversation_id,
+            "Conversation unmuted"
+        );
+
+        Ok(())
+    }
+
+    /// Check if a user has muted a conversation
+    pub async fn is_conversation_muted(
+        &self,
+        conversation_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, ConversationError> {
+        let result: Option<(bool,)> = sqlx::query_as(
+            r#"
+            SELECT is_muted
+            FROM conversation_participants
+            WHERE conversation_id = $1 AND user_id = $2 AND tenant_id = $3 AND left_at IS NULL
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(user_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| ConversationError::Database(e.to_string()))?;
+
+        Ok(result.map(|(muted,)| muted).unwrap_or(false))
+    }
+
+    /// Get all muted user IDs for a conversation
+    /// Used by router to filter push notifications
+    pub async fn get_muted_user_ids(
+        &self,
+        conversation_id: Uuid,
+    ) -> Result<Vec<Uuid>, ConversationError> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            r#"
+            SELECT user_id
+            FROM conversation_participants
+            WHERE conversation_id = $1 AND tenant_id = $2 AND left_at IS NULL AND is_muted = TRUE
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(&self.tenant_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| ConversationError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|(id,)| id).collect())
+    }
+
+    /// Get all muted conversation IDs for a user
+    pub async fn get_muted_conversations(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Vec<Uuid>, ConversationError> {
+        let rows: Vec<(Uuid,)> = sqlx::query_as(
+            r#"
+            SELECT conversation_id
+            FROM conversation_participants
+            WHERE user_id = $1 AND tenant_id = $2 AND left_at IS NULL AND is_muted = TRUE
+            "#,
+        )
+        .bind(user_id)
+        .bind(&self.tenant_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| ConversationError::Database(e.to_string()))?;
+
+        Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 }
 

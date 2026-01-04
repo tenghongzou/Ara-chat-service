@@ -32,6 +32,7 @@ pub use domain::attachment;
 pub use domain::cluster;
 pub use domain::connection;
 pub use domain::conversation;
+pub use domain::gdpr;
 pub use domain::mention;
 pub use domain::message;
 pub use domain::notification;

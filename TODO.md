@@ -98,6 +98,35 @@ Project status and planned features for Ara Chat Service.
 - [x] Emoji reaction notifications / 表情反應通知
 - [x] Configurable notification types / 可配置通知類型
 
+### GDPR Compliance / GDPR 合規 *(v1.2.0)*
+- [x] Data export (Art. 20 - Data Portability) / 資料匯出
+- [x] Data deletion (Art. 17 - Right to Erasure) / 資料刪除
+- [x] Message anonymization / 訊息匿名化
+- [x] Audit logging (Art. 30 - Records of Processing) / 審計日誌
+- [x] 7-year audit log retention / 7 年審計日誌保留
+- [x] REST API endpoints / REST API 端點
+
+### Message Pinning / 訊息置頂 *(v1.3.0)*
+- [x] Pin/unpin messages (Owner/Admin only) / 置頂/取消置頂訊息
+- [x] Get pinned messages list / 獲取置頂訊息列表
+- [x] Real-time pin/unpin notifications / 即時置頂通知
+- [x] WebSocket: PinMessage, UnpinMessage / WebSocket 訊息
+- [x] REST API endpoints / REST API 端點
+  - `POST /api/v1/conversations/{id}/messages/{msg_id}/pin`
+  - `DELETE /api/v1/conversations/{id}/messages/{msg_id}/pin`
+  - `GET /api/v1/conversations/{id}/pinned`
+
+### Conversation Muting / 對話靜音 *(v1.3.0)*
+- [x] Mute/unmute conversations / 靜音/取消靜音對話
+- [x] Skip push notifications for muted conversations / 靜音對話跳過推送通知
+- [x] @mentions override mute status / @提及覆蓋靜音狀態
+- [x] Muted conversations list / 靜音對話列表
+- [x] WebSocket: MuteConversation, UnmuteConversation / WebSocket 訊息
+- [x] REST API endpoints / REST API 端點
+  - `POST /api/v1/conversations/{id}/mute`
+  - `DELETE /api/v1/conversations/{id}/mute`
+  - `GET /api/v1/conversations/muted`
+
 ---
 
 ## Planned Features / 計劃中功能
@@ -125,8 +154,8 @@ Project status and planned features for Ara Chat Service.
 
 #### Advanced Features / 進階功能
 - [x] Message threading (replies) / 訊息串（回覆） *(v1.2.0)*
-- [ ] Message pinning / 訊息置頂
-- [ ] Conversation muting / 對話靜音
+- [x] Message pinning / 訊息置頂 *(v1.3.0)*
+- [x] Conversation muting / 對話靜音 *(v1.3.0)*
 - [ ] User blocking / 用戶封鎖
 - [ ] Message forwarding / 訊息轉發
 
@@ -137,9 +166,9 @@ Project status and planned features for Ara Chat Service.
 ### Low Priority / 低優先級
 
 #### Data Management / 資料管理
-- [ ] Message export / 訊息匯出
-- [ ] User data deletion (GDPR) / 用戶資料刪除
-- [ ] Audit logging / 審計日誌
+- [x] Message export (GDPR) / 訊息匯出 *(v1.2.0)*
+- [x] User data deletion (GDPR) / 用戶資料刪除 *(v1.2.0)*
+- [x] Audit logging (GDPR) / 審計日誌 *(v1.2.0)*
 - [ ] Data backup automation / 資料備份自動化
 
 #### Performance / 效能
@@ -190,10 +219,14 @@ Project status and planned features for Ara Chat Service.
 - ~~Database migration tests~~ *(Completed: 10 tests)*
 - ~~File upload support~~ *(Completed: Local + S3/MinIO, thumbnails)*
 
-### v1.2.0 (In Progress)
+### v1.2.0 (Completed)
 - ~~Message threading~~ *(Completed: thread queries, reply context, ThreadUpdated events)*
 - ~~Notification service integration~~ *(Completed: Redis Pub/Sub, new message/mention/reaction notifications)*
-- GDPR compliance
+- ~~GDPR compliance~~ *(Completed: data export, data deletion/anonymization, audit logging)*
+
+### v1.3.0 (Completed)
+- ~~Message pinning~~ *(Completed: pin/unpin, pinned list, real-time notifications, REST API)*
+- ~~Conversation muting~~ *(Completed: mute/unmute, skip push notifications, @mentions override, REST API)*
 
 ### v2.0.0 (Future)
 - End-to-end encryption

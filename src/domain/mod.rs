@@ -4,6 +4,7 @@ pub mod attachment;
 pub mod cluster;
 pub mod connection;
 pub mod conversation;
+pub mod gdpr;
 pub mod mention;
 pub mod message;
 pub mod notification;

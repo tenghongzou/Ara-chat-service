@@ -31,6 +31,8 @@ pub struct Settings {
     pub file_storage: FileStorageSettings,
     #[serde(default)]
     pub notification: NotificationSettings,
+    #[serde(default)]
+    pub gdpr: GdprSettings,
 }
 
 fn default_host() -> String {
@@ -375,6 +377,50 @@ fn default_true() -> bool {
     true
 }
 
+/// GDPR compliance settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct GdprSettings {
+    /// Enable GDPR compliance features
+    #[serde(default = "default_gdpr_enabled")]
+    pub enabled: bool,
+    /// Base path for export files
+    #[serde(default = "default_gdpr_export_path")]
+    pub export_path: String,
+    /// Days to retain export files before cleanup
+    #[serde(default = "default_gdpr_export_retention_days")]
+    pub export_retention_days: u32,
+    /// Years to retain audit logs (GDPR requires minimum 7 years)
+    #[serde(default = "default_gdpr_audit_retention_years")]
+    pub audit_log_retention_years: u32,
+}
+
+impl Default for GdprSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_gdpr_enabled(),
+            export_path: default_gdpr_export_path(),
+            export_retention_days: default_gdpr_export_retention_days(),
+            audit_log_retention_years: default_gdpr_audit_retention_years(),
+        }
+    }
+}
+
+fn default_gdpr_enabled() -> bool {
+    true
+}
+
+fn default_gdpr_export_path() -> String {
+    "./gdpr-exports".to_string()
+}
+
+fn default_gdpr_export_retention_days() -> u32 {
+    7
+}
+
+fn default_gdpr_audit_retention_years() -> u32 {
+    7
+}
+
 impl Settings {
     /// Create minimal settings for testing (no external dependencies)
     #[cfg(any(test, feature = "test-utils"))]
@@ -412,6 +458,7 @@ impl Settings {
             cors: CorsSettings::default(),
             file_storage: FileStorageSettings::default(),
             notification: NotificationSettings::default(),
+            gdpr: GdprSettings::default(),
         }
     }
 

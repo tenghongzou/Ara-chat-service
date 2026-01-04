@@ -289,6 +289,28 @@ async fn handle_client_message(user_id: Uuid, msg: ClientMessage, state: &AppSta
             handle_get_reactions(user_id, message_ids, state).await;
         }
 
+        ClientMessage::PinMessage {
+            conversation_id,
+            message_id,
+        } => {
+            handle_pin_message(user_id, conversation_id, message_id, state).await;
+        }
+
+        ClientMessage::UnpinMessage {
+            conversation_id,
+            message_id,
+        } => {
+            handle_unpin_message(user_id, conversation_id, message_id, state).await;
+        }
+
+        ClientMessage::MuteConversation { conversation_id } => {
+            handle_mute_conversation(user_id, conversation_id, state).await;
+        }
+
+        ClientMessage::UnmuteConversation { conversation_id } => {
+            handle_unmute_conversation(user_id, conversation_id, state).await;
+        }
+
         ClientMessage::Authenticate { .. } => {
             // Already authenticated via query param
             tracing::debug!(user_id = %user_id, "Re-auth attempted on authenticated connection");
@@ -845,6 +867,7 @@ async fn handle_create_conversation(
                 last_message: None,
                 unread_count: 0,
                 updated_at,
+                is_muted: false,
             };
 
             let response = ServerMessage::ConversationCreated { conversation: summary };
@@ -1036,6 +1059,128 @@ async fn handle_get_reactions(
         Err(e) => {
             tracing::warn!(user_id = %user_id, error = %e, "Failed to get reactions");
             send_error(user_id, "FETCH_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+/// Handle pin message request
+async fn handle_pin_message(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    message_id: Uuid,
+    state: &AppState,
+) {
+    let handler = match &state.message_handler {
+        Some(h) => h,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match handler.handle_pin_message(user_id, conversation_id, message_id).await {
+        Ok(pinned_at) => {
+            tracing::info!(
+                user_id = %user_id,
+                conversation_id = %conversation_id,
+                message_id = %message_id,
+                pinned_at = %pinned_at,
+                "Message pinned"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to pin message");
+            send_error(user_id, "PIN_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+/// Handle unpin message request
+async fn handle_unpin_message(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    message_id: Uuid,
+    state: &AppState,
+) {
+    let handler = match &state.message_handler {
+        Some(h) => h,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match handler.handle_unpin_message(user_id, conversation_id, message_id).await {
+        Ok(()) => {
+            tracing::info!(
+                user_id = %user_id,
+                conversation_id = %conversation_id,
+                message_id = %message_id,
+                "Message unpinned"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to unpin message");
+            send_error(user_id, "UNPIN_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+/// Handle mute conversation request
+async fn handle_mute_conversation(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    state: &AppState,
+) {
+    let handler = match &state.message_handler {
+        Some(h) => h,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match handler.handle_mute_conversation(user_id, conversation_id).await {
+        Ok(muted_at) => {
+            tracing::info!(
+                user_id = %user_id,
+                conversation_id = %conversation_id,
+                muted_at = %muted_at,
+                "Conversation muted"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to mute conversation");
+            send_error(user_id, "MUTE_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+/// Handle unmute conversation request
+async fn handle_unmute_conversation(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    state: &AppState,
+) {
+    let handler = match &state.message_handler {
+        Some(h) => h,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Message service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    match handler.handle_unmute_conversation(user_id, conversation_id).await {
+        Ok(()) => {
+            tracing::info!(
+                user_id = %user_id,
+                conversation_id = %conversation_id,
+                "Conversation unmuted"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to unmute conversation");
+            send_error(user_id, "UNMUTE_FAILED", e.to_string(), state).await;
         }
     }
 }

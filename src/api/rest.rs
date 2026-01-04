@@ -241,6 +241,7 @@ pub async fn create_conversation(
                 last_message: None,
                 unread_count: 0,
                 updated_at,
+                is_muted: false,
             };
 
             Ok(Json(summary))
@@ -869,6 +870,279 @@ pub async fn get_reply_context(
         )),
         Err(e) => {
             tracing::error!(user_id = %user_id, message_id = %message_id, error = %e, "Failed to fetch reply context");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "FETCH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+// --- Message Pinning API ---
+
+#[derive(Serialize)]
+pub struct PinResponse {
+    pub message_id: Uuid,
+    pub conversation_id: Uuid,
+    pub pinned_by: Uuid,
+    pub pinned_at: i64,
+}
+
+#[derive(Serialize)]
+pub struct PinnedMessagesResponse {
+    pub messages: Vec<ChatMessage>,
+    pub count: usize,
+}
+
+#[derive(Deserialize)]
+pub struct PinnedMessagesQuery {
+    pub limit: Option<i64>,
+}
+
+/// Pin a message in a conversation
+pub async fn pin_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((conversation_id, message_id)): Path<(Uuid, Uuid)>,
+) -> Result<Json<PinResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let handler = state.message_handler.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    match handler.handle_pin_message(user_id, conversation_id, message_id).await {
+        Ok(pinned_at) => Ok(Json(PinResponse {
+            message_id,
+            conversation_id,
+            pinned_by: user_id,
+            pinned_at,
+        })),
+        Err(e) => {
+            let status = match &e {
+                crate::message::MessageHandlerError::NotParticipant => StatusCode::FORBIDDEN,
+                crate::message::MessageHandlerError::MessageNotFound => StatusCode::NOT_FOUND,
+                crate::message::MessageHandlerError::InsufficientPinPermission => StatusCode::FORBIDDEN,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            tracing::error!(user_id = %user_id, message_id = %message_id, error = %e, "Failed to pin message");
+            Err((
+                status,
+                Json(ErrorResponse {
+                    code: "PIN_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+/// Unpin a message from a conversation
+pub async fn unpin_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path((conversation_id, message_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let handler = state.message_handler.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    match handler.handle_unpin_message(user_id, conversation_id, message_id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            let status = match &e {
+                crate::message::MessageHandlerError::NotParticipant => StatusCode::FORBIDDEN,
+                crate::message::MessageHandlerError::MessageNotFound => StatusCode::NOT_FOUND,
+                crate::message::MessageHandlerError::InsufficientPinPermission => StatusCode::FORBIDDEN,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            tracing::error!(user_id = %user_id, message_id = %message_id, error = %e, "Failed to unpin message");
+            Err((
+                status,
+                Json(ErrorResponse {
+                    code: "UNPIN_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+/// Get all pinned messages in a conversation
+pub async fn get_pinned_messages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(conversation_id): Path<Uuid>,
+    Query(query): Query<PinnedMessagesQuery>,
+) -> Result<Json<PinnedMessagesResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let handler = state.message_handler.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    let limit = query.limit.unwrap_or(50).min(100);
+
+    match handler.get_pinned_messages(user_id, conversation_id, limit).await {
+        Ok(messages) => {
+            let count = messages.len();
+            Ok(Json(PinnedMessagesResponse { messages, count }))
+        }
+        Err(e) => {
+            let status = match &e {
+                crate::message::MessageHandlerError::NotParticipant => StatusCode::FORBIDDEN,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            tracing::error!(user_id = %user_id, conversation_id = %conversation_id, error = %e, "Failed to get pinned messages");
+            Err((
+                status,
+                Json(ErrorResponse {
+                    code: "FETCH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+// --- Conversation Muting API ---
+
+#[derive(Serialize)]
+pub struct MuteResponse {
+    pub conversation_id: Uuid,
+    pub muted_at: i64,
+}
+
+#[derive(Serialize)]
+pub struct MutedConversationsResponse {
+    pub conversations: Vec<Uuid>,
+    pub count: usize,
+}
+
+/// Mute a conversation (no push notifications)
+pub async fn mute_conversation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(conversation_id): Path<Uuid>,
+) -> Result<Json<MuteResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let handler = state.message_handler.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    match handler.handle_mute_conversation(user_id, conversation_id).await {
+        Ok(muted_at) => Ok(Json(MuteResponse {
+            conversation_id,
+            muted_at,
+        })),
+        Err(e) => {
+            let status = match &e {
+                crate::message::MessageHandlerError::NotParticipant => StatusCode::FORBIDDEN,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            tracing::error!(user_id = %user_id, conversation_id = %conversation_id, error = %e, "Failed to mute conversation");
+            Err((
+                status,
+                Json(ErrorResponse {
+                    code: "MUTE_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+/// Unmute a conversation
+pub async fn unmute_conversation(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(conversation_id): Path<Uuid>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let handler = state.message_handler.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    match handler.handle_unmute_conversation(user_id, conversation_id).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) => {
+            let status = match &e {
+                crate::message::MessageHandlerError::NotParticipant => StatusCode::FORBIDDEN,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            tracing::error!(user_id = %user_id, conversation_id = %conversation_id, error = %e, "Failed to unmute conversation");
+            Err((
+                status,
+                Json(ErrorResponse {
+                    code: "UNMUTE_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+/// Get list of muted conversations for the current user
+pub async fn get_muted_conversations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<MutedConversationsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let handler = state.message_handler.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    match handler.get_muted_conversations(user_id).await {
+        Ok(conversations) => {
+            let count = conversations.len();
+            Ok(Json(MutedConversationsResponse { conversations, count }))
+        }
+        Err(e) => {
+            tracing::error!(user_id = %user_id, error = %e, "Failed to get muted conversations");
             Err((
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {

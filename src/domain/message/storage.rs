@@ -45,8 +45,17 @@ impl MessageRow {
             mentions: self.mentions,
             reactions: Default::default(), // Loaded separately
             recalled_at: self.deleted_at.map(|t| t.timestamp_millis()),
+            pinned_at: None,      // Loaded separately when needed
+            pinned_by: None,      // Loaded separately when needed
         }
     }
+}
+
+/// Pin info row from database
+#[derive(Debug, FromRow)]
+struct PinInfoRow {
+    pinned_at: DateTime<Utc>,
+    pinned_by: Uuid,
 }
 
 /// Message storage backend
@@ -714,6 +723,215 @@ impl MessageStorage {
 
         Ok(result)
     }
+
+    // ==================== Pin-related Methods ====================
+
+    /// Pin a message in a conversation
+    /// Returns the timestamp when the message was pinned
+    pub async fn pin_message(
+        &self,
+        message_id: Uuid,
+        conversation_id: Uuid,
+        pinned_by: Uuid,
+    ) -> Result<i64, StorageError> {
+        // First verify the message exists and belongs to this conversation
+        let msg_check: Option<(Uuid,)> = sqlx::query_as(
+            r#"
+            SELECT conversation_id
+            FROM messages
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(message_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        match msg_check {
+            Some((msg_conv_id,)) if msg_conv_id == conversation_id => {
+                // Message exists and is in the correct conversation
+            }
+            Some(_) => {
+                return Err(StorageError::MessageNotInConversation);
+            }
+            None => {
+                return Err(StorageError::NotFound);
+            }
+        }
+
+        // Insert the pin (ON CONFLICT DO UPDATE to handle re-pinning)
+        let row: (DateTime<Utc>,) = sqlx::query_as(
+            r#"
+            INSERT INTO message_pins (message_id, conversation_id, pinned_by, pinned_at)
+            VALUES ($1, $2, $3, NOW())
+            ON CONFLICT (message_id, conversation_id) DO UPDATE
+                SET pinned_by = $3, pinned_at = NOW()
+            RETURNING pinned_at
+            "#,
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .bind(pinned_by)
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.0.timestamp_millis())
+    }
+
+    /// Unpin a message from a conversation
+    /// Returns true if the message was unpinned, false if it wasn't pinned
+    pub async fn unpin_message(
+        &self,
+        message_id: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<bool, StorageError> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM message_pins
+            WHERE message_id = $1 AND conversation_id = $2
+            "#,
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .execute(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Check if a message is pinned
+    pub async fn is_message_pinned(
+        &self,
+        message_id: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<bool, StorageError> {
+        let exists: Option<(i64,)> = sqlx::query_as(
+            r#"
+            SELECT 1
+            FROM message_pins
+            WHERE message_id = $1 AND conversation_id = $2
+            "#,
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(exists.is_some())
+    }
+
+    /// Get pin info for a message (pinned_at, pinned_by)
+    pub async fn get_pin_info(
+        &self,
+        message_id: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<Option<(i64, Uuid)>, StorageError> {
+        let row: Option<PinInfoRow> = sqlx::query_as(
+            r#"
+            SELECT pinned_at, pinned_by
+            FROM message_pins
+            WHERE message_id = $1 AND conversation_id = $2
+            "#,
+        )
+        .bind(message_id)
+        .bind(conversation_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.map(|r| (r.pinned_at.timestamp_millis(), r.pinned_by)))
+    }
+
+    /// Get all pinned messages in a conversation
+    pub async fn get_pinned_messages(
+        &self,
+        conversation_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<ChatMessage>, StorageError> {
+        let limit = limit.min(100);
+
+        // Get pinned message IDs with their pin info
+        let pin_rows: Vec<(Uuid, DateTime<Utc>, Uuid)> = sqlx::query_as(
+            r#"
+            SELECT message_id, pinned_at, pinned_by
+            FROM message_pins
+            WHERE conversation_id = $1
+            ORDER BY pinned_at DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(limit)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        if pin_rows.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Collect message IDs and create a map of pin info
+        let message_ids: Vec<Uuid> = pin_rows.iter().map(|(id, _, _)| *id).collect();
+        let pin_info: std::collections::HashMap<Uuid, (i64, Uuid)> = pin_rows
+            .into_iter()
+            .map(|(id, at, by)| (id, (at.timestamp_millis(), by)))
+            .collect();
+
+        // Fetch the full messages
+        let rows = sqlx::query_as::<_, MessageRow>(
+            r#"
+            SELECT
+                id, conversation_id, sender_id, content, content_type,
+                created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+            FROM messages
+            WHERE id = ANY($1) AND tenant_id = $2
+            "#,
+        )
+        .bind(&message_ids)
+        .bind(&self.tenant_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        // Convert to ChatMessage and add pin info
+        let mut messages: Vec<ChatMessage> = rows
+            .into_iter()
+            .map(|r| {
+                let mut msg = r.into_chat_message();
+                if let Some((pinned_at, pinned_by)) = pin_info.get(&msg.id) {
+                    msg.pinned_at = Some(*pinned_at);
+                    msg.pinned_by = Some(*pinned_by);
+                }
+                msg
+            })
+            .collect();
+
+        // Sort by pinned_at DESC (most recently pinned first)
+        messages.sort_by(|a, b| b.pinned_at.cmp(&a.pinned_at));
+
+        Ok(messages)
+    }
+
+    /// Get the count of pinned messages in a conversation
+    pub async fn get_pinned_count(&self, conversation_id: Uuid) -> Result<i64, StorageError> {
+        let count: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM message_pins
+            WHERE conversation_id = $1
+            "#,
+        )
+        .bind(conversation_id)
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(count.0)
+    }
 }
 
 /// Search result row from database
@@ -755,6 +973,9 @@ pub enum StorageError {
 
     #[error("Invalid reply target: message not found or deleted")]
     InvalidReplyTarget,
+
+    #[error("Message does not belong to this conversation")]
+    MessageNotInConversation,
 }
 
 #[cfg(test)]

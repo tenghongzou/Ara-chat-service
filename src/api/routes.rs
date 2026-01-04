@@ -8,6 +8,7 @@ use axum::{
 
 use crate::server::AppState;
 use super::attachment;
+use super::gdpr;
 use super::health::{
     health_check,
     liveness_probe,
@@ -51,6 +52,19 @@ pub fn create_router(state: AppState) -> Router {
         // REST API - Threads
         .route("/api/v1/messages/{id}/thread", get(rest::get_thread))
         .route("/api/v1/messages/{id}/context", get(rest::get_reply_context))
+        // REST API - Message Pinning
+        .route("/api/v1/conversations/{id}/messages/{msg_id}/pin", post(rest::pin_message))
+        .route("/api/v1/conversations/{id}/messages/{msg_id}/pin", delete(rest::unpin_message))
+        .route("/api/v1/conversations/{id}/pinned", get(rest::get_pinned_messages))
+        // REST API - Conversation Muting
+        .route("/api/v1/conversations/{id}/mute", post(rest::mute_conversation))
+        .route("/api/v1/conversations/{id}/mute", delete(rest::unmute_conversation))
+        .route("/api/v1/conversations/muted", get(rest::get_muted_conversations))
+        // REST API - GDPR Compliance
+        .route("/api/v1/gdpr/export", post(gdpr::request_export))
+        .route("/api/v1/gdpr/export/{id}", get(gdpr::get_export_status))
+        .route("/api/v1/gdpr/data", delete(gdpr::request_deletion))
+        .route("/api/v1/gdpr/audit", get(gdpr::get_audit_log))
         // Apply middleware
         .layer(middleware::from_fn(request_id_middleware))
         .with_state(state)
