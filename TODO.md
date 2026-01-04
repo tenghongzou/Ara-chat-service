@@ -73,6 +73,7 @@ Project status and planned features for Ara Chat Service.
 - [x] Bilingual docs (en/zh-TW) / 雙語文檔
 - [x] CONTRIBUTING.md
 - [x] CHANGELOG.md
+- [x] API versioning strategy (`docs/API_VERSIONING.md`) / API 版本策略 *(v1.12.0)*
 
 ### File Handling / 檔案處理 *(v1.1.0)*
 - [x] File upload with multipart support / 多部分上傳
@@ -320,7 +321,7 @@ Project status and planned features for Ara Chat Service.
 - [ ] pg_partman not auto-initialized / pg_partman 未自動初始化
 
 ### Documentation / 文檔
-- [ ] Missing API versioning strategy / 缺少 API 版本策略
+- [x] API versioning strategy / API 版本策略 *(Added in v1.12.0)*
 
 ---
 
@@ -379,6 +380,7 @@ Project status and planned features for Ara Chat Service.
 - ~~Connection multiplexing~~ *(Completed: per-connection conversation subscriptions, legacy/explicit modes, auto-subscribe on FetchHistory/SendMessage, system message bypass, subscription metrics)*
 
 ### v1.12.0 (Completed)
+- ~~API versioning strategy~~ *(Completed: path-based REST versioning, WebSocket capability negotiation, deprecation policy, backward compatibility guidelines, migration guide template)*
 - ~~Lazy loading for large groups~~ *(Completed: participant preview in conversation list, optimized single-query loading, paginated participant fetching, on-demand full list, role-based ordering, backward compatible)*
 
 ### v2.0.0 (Future)

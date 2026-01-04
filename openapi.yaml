@@ -4,12 +4,42 @@ info:
   description: |
     Real-time chat service with WebSocket support.
 
+    ## API Versioning
+
+    This API uses **path-based versioning**. All REST endpoints are prefixed with `/api/v1/`.
+
+    - **Current API Version:** v1
+    - **Service Version:** 1.12.0
+    - **Protocol Version:** 1.12 (WebSocket)
+
+    ### Version Headers
+
+    All responses include version headers:
+    - `X-API-Version: v1`
+    - `X-Service-Version: 1.12.0`
+
+    ### Deprecation Policy
+
+    Deprecated endpoints include headers:
+    - `Deprecation: true`
+    - `Sunset: <date>`
+    - `X-Deprecation-Notice: <message>`
+
+    See [API Versioning Strategy](./docs/API_VERSIONING.md) for full details.
+
     ## Authentication
-    All endpoints require JWT authentication via Bearer token.
+
+    All endpoints (except health checks) require JWT authentication via Bearer token.
 
     ## WebSocket
+
     For real-time messaging, connect to `ws://host:8082/ws?token=JWT_TOKEN`
-  version: 1.0.0
+
+    The WebSocket protocol uses capability negotiation. After connection, send:
+    ```json
+    {"type": "Capabilities", "payload": {"compression": ["zstd"], "protocol_version": "1.12.0"}}
+    ```
+  version: 1.12.0
   contact:
     name: Ara Team
   license:

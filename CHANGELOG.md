@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.12.0] - 2026-01-05
 
 ### Added
+- **API Versioning Strategy**: Comprehensive versioning documentation and guidelines
+  - Path-based REST API versioning (`/api/v1/`)
+  - WebSocket protocol versioning via capability negotiation
+  - Deprecation policy with sunset headers
+  - Backward compatibility guidelines
+  - Migration guide template
+  - Client implementation recommendations
+  - Documentation: `docs/API_VERSIONING.md`
+  - Updated OpenAPI specification with versioning info
+
 - **Lazy Loading for Large Groups**: Optimized participant loading for large group conversations
   - Participant preview in conversation list (default: 5 participants)
   - Eliminates N+1 query problem with single optimized SQL query
@@ -292,7 +302,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Description |
 |---------|------|-------------|
-| 1.12.0 | 2026-01-05 | Lazy loading for large groups (participant preview) |
+| 1.12.0 | 2026-01-05 | API versioning strategy, lazy loading for large groups |
 | 1.11.0 | 2026-01-05 | Connection multiplexing (conversation subscription) |
 | 1.10.0 | 2026-01-05 | Message compression (zstd) |
 | 1.9.0 | 2026-01-04 | Email notifications for offline users |
