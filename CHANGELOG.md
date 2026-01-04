@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.10.0] - 2026-01-05
+
+### Added
+- **Message Compression**: Application-level zstd compression for WebSocket messages
+  - zstd compression using the `zstd` crate for optimal ratio and speed
+  - Configurable compression threshold (default 1KB, skip small messages)
+  - Configurable compression level (1-22, default 3)
+  - Capability negotiation during WebSocket handshake
+    - Client sends `Capabilities` message with supported compression algorithms
+    - Server responds with `CapabilitiesAck` confirming compression settings
+  - Backward compatible with non-compressed clients
+    - Legacy clients continue to receive JSON text messages
+    - Only clients that announce compression support receive binary messages
+  - Binary message format with 1-byte flags header:
+    - Bit 0: compressed (1) or raw (0)
+    - Bits 1-2: algorithm (00=zstd)
+    - Bits 3-7: reserved
+  - Compression metrics for monitoring:
+    - `chat_compression_ratio` - Histogram of compression ratios
+    - `chat_messages_compressed_total` - Counter of compressed messages
+    - `chat_messages_uncompressed_total` - Counter of uncompressed messages
+    - `chat_compression_bytes_saved_total` - Total bytes saved
+  - Configurable via `CHAT__COMPRESSION__*` environment variables:
+    - `CHAT__COMPRESSION__ENABLED` - Enable/disable compression (default: true)
+    - `CHAT__COMPRESSION__ALGORITHM` - Algorithm (zstd or none)
+    - `CHAT__COMPRESSION__LEVEL` - Compression level 1-22 (default: 3)
+    - `CHAT__COMPRESSION__THRESHOLD` - Min size to compress (default: 1024)
+    - `CHAT__COMPRESSION__MAX_DECOMPRESSED_SIZE` - Max decompressed size (default: 10MB)
+  - Expected bandwidth savings: 30-50% for typical chat usage
+
+## [1.9.0] - 2026-01-04
+
 ### Added
 - **Email Notification for Offline Users**: Send email notifications when offline users receive messages
   - SMTP backend via lettre crate with TLS support
@@ -203,6 +235,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 1.10.0 | 2026-01-05 | Message compression (zstd) |
+| 1.9.0 | 2026-01-04 | Email notifications for offline users |
+| 1.8.0 | 2026-01-04 | Custom emoji support |
+| 1.7.0 | 2026-01-04 | Markdown rendering hints |
+| 1.6.0 | 2026-01-04 | Link preview |
+| 1.5.0 | 2026-01-03 | Message forwarding |
+| 1.4.0 | 2026-01-03 | User blocking |
+| 1.3.0 | 2026-01-03 | Message pinning, conversation muting |
+| 1.2.0 | 2026-01-03 | Threading, notifications, GDPR |
+| 1.1.0 | 2026-01-03 | File handling |
 | 1.0.0 | 2026-01-03 | Initial release |
 
 ## Migration Notes

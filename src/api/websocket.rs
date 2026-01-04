@@ -1,5 +1,7 @@
 //! WebSocket handler
 
+use std::sync::Arc;
+
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -13,6 +15,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::auth::Claims;
+use crate::compression::{CompressionCodec, create_codec};
 use crate::connection::Connection;
 use crate::domain::validation::{limits, sanitize_message_content, sanitize_conversation_name};
 use crate::message::{ClientMessage, OutboundMessage, ReactionAction, ServerMessage};
@@ -104,12 +107,54 @@ async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
     let presence_tracker_cleanup = state.presence_tracker.clone();
     let presence_broadcaster_cleanup = state.presence_broadcaster.clone();
 
+    // Create compression codec from settings
+    let compression_codec: Option<Arc<CompressionCodec>> = if state.settings.compression.enabled {
+        Some(create_codec(
+            &state.settings.compression.algorithm,
+            state.settings.compression.level,
+            state.settings.compression.threshold,
+            state.settings.compression.max_decompressed_size,
+        ))
+    } else {
+        None
+    };
+
+    // Track if client supports compression (set after receiving Capabilities message)
+    let client_supports_compression = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let client_compression_flag = client_supports_compression.clone();
+    let codec_for_send = compression_codec.clone();
+
     // Spawn task to forward outbound messages to WebSocket
     let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             match msg.to_json() {
                 Ok(json) => {
-                    if ws_sender.send(Message::Text(json.into())).await.is_err() {
+                    // Use compression if both server and client support it
+                    let ws_msg = if client_compression_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                        if let Some(ref codec) = codec_for_send {
+                            match codec.compress_json(&json) {
+                                Ok(compressed) => {
+                                    // Track compression metrics
+                                    let original_len = json.len();
+                                    let compressed_len = compressed.len();
+                                    if compressed_len < original_len {
+                                        crate::metrics::record_compression(original_len, compressed_len);
+                                    }
+                                    Message::Binary(compressed.into())
+                                }
+                                Err(e) => {
+                                    tracing::warn!(error = %e, "Compression failed, sending uncompressed");
+                                    Message::Text(json.into())
+                                }
+                            }
+                        } else {
+                            Message::Text(json.into())
+                        }
+                    } else {
+                        Message::Text(json.into())
+                    };
+
+                    if ws_sender.send(ws_msg).await.is_err() {
                         break;
                     }
                 }
@@ -121,6 +166,7 @@ async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
     });
 
     // Handle incoming messages
+    let codec_for_recv = compression_codec.clone();
     let recv_task = tokio::spawn(async move {
         while let Some(result) = ws_receiver.next().await {
             match result {
@@ -128,12 +174,54 @@ async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
                     match serde_json::from_str::<ClientMessage>(&text) {
                         Ok(msg) => {
                             tracing::debug!(user_id = %user_id, msg_type = ?std::mem::discriminant(&msg), "Received client message");
-                            handle_client_message(user_id, msg, &state).await;
+                            // Handle Capabilities message specially to enable compression
+                            if let ClientMessage::Capabilities { compression, .. } = &msg {
+                                if state.settings.compression.enabled && compression.contains(&"zstd".to_string()) {
+                                    client_supports_compression.store(true, std::sync::atomic::Ordering::Relaxed);
+                                    let ack = ServerMessage::capabilities_ack(
+                                        Some("zstd".to_string()),
+                                        state.settings.compression.threshold,
+                                    );
+                                    state.connection_manager.send_to_user(&user_id, ack.into()).await;
+                                    tracing::debug!(user_id = %user_id, "Compression enabled for client");
+                                } else {
+                                    let ack = ServerMessage::capabilities_ack(None, 0);
+                                    state.connection_manager.send_to_user(&user_id, ack.into()).await;
+                                }
+                            } else {
+                                handle_client_message(user_id, msg, &state).await;
+                            }
                         }
                         Err(e) => {
                             tracing::warn!(user_id = %user_id, error = %e, raw = %text, "Failed to parse client message");
                             send_error(user_id, "INVALID_MESSAGE", format!("Failed to parse message: {}", e), &state).await;
                         }
+                    }
+                }
+                Ok(Message::Binary(data)) => {
+                    // Handle compressed binary messages
+                    if let Some(ref codec) = codec_for_recv {
+                        match codec.decompress_to_string(&data) {
+                            Ok(text) => {
+                                match serde_json::from_str::<ClientMessage>(&text) {
+                                    Ok(msg) => {
+                                        tracing::debug!(user_id = %user_id, msg_type = ?std::mem::discriminant(&msg), "Received compressed client message");
+                                        handle_client_message(user_id, msg, &state).await;
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(user_id = %user_id, error = %e, "Failed to parse decompressed message");
+                                        send_error(user_id, "INVALID_MESSAGE", format!("Failed to parse message: {}", e), &state).await;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(user_id = %user_id, error = %e, "Failed to decompress binary message");
+                                send_error(user_id, "DECOMPRESSION_FAILED", format!("Failed to decompress: {}", e), &state).await;
+                            }
+                        }
+                    } else {
+                        tracing::warn!(user_id = %user_id, "Received binary message but compression not enabled");
+                        send_error(user_id, "BINARY_NOT_SUPPORTED", "Binary messages not supported".to_string(), &state).await;
                     }
                 }
                 Ok(Message::Close(_)) => break,

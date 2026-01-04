@@ -217,6 +217,17 @@ Project status and planned features for Ara Chat Service.
   - `GET /api/v1/email/status` - Get email service status
 - [x] Database migration: `016_email_notifications.sql`
 
+### Message Compression / 訊息壓縮 *(v1.10.0)*
+- [x] Application-level zstd compression / 應用層 zstd 壓縮
+- [x] Configurable compression threshold (default 1KB) / 可配置壓縮閾值
+- [x] Compression level configuration (1-22, default 3) / 壓縮等級配置
+- [x] Capability negotiation during WebSocket handshake / WebSocket 握手能力協商
+- [x] Backward compatible with non-compressed clients / 向後兼容非壓縮客戶端
+- [x] Binary message format with flags byte / 二進制訊息格式
+- [x] Compression ratio tracking metrics / 壓縮比追蹤指標
+- [x] WebSocket: Capabilities, CapabilitiesAck / WebSocket 訊息
+- [x] Configurable via `CHAT__COMPRESSION__*` environment variables
+
 ---
 
 ## Planned Features / 計劃中功能
@@ -262,7 +273,7 @@ Project status and planned features for Ara Chat Service.
 - [ ] Data backup automation / 資料備份自動化
 
 #### Performance / 效能
-- [ ] Message compression / 訊息壓縮
+- [x] Message compression / 訊息壓縮 *(v1.10.0)*
 - [ ] Connection multiplexing / 連線多工
 - [ ] Lazy loading for large groups / 大群組懶載入
 
@@ -336,6 +347,9 @@ Project status and planned features for Ara Chat Service.
 ### v1.9.0 (Completed)
 - ~~Email notification~~ *(Completed: offline user email notifications, SMTP/SendGrid backends, configurable delay, message batching, user preferences, quiet hours, rate limiting, REST API)*
 
+### v1.10.0 (Completed)
+- ~~Message compression~~ *(Completed: application-level zstd compression, configurable threshold/level, capability negotiation, backward compatible, binary format, compression metrics)*
+
 ### v2.0.0 (Future)
 - End-to-end encryption
 - Voice messages
@@ -343,7 +357,7 @@ Project status and planned features for Ara Chat Service.
 
 ---
 
-Last updated: 2026-01-04
+Last updated: 2026-01-05
 
 ---
 

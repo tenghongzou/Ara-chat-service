@@ -31,6 +31,7 @@ pub mod domain;
 pub use domain::attachment;
 pub use domain::blocking;
 pub use domain::cluster;
+pub use domain::compression;
 pub use domain::connection;
 pub use domain::conversation;
 pub use domain::email;

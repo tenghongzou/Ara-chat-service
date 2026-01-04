@@ -147,6 +147,16 @@ pub enum ClientMessage {
         target_conversation_ids: Vec<Uuid>,
     },
 
+    /// Announce client capabilities (compression support, etc.)
+    Capabilities {
+        /// Supported compression algorithms (e.g., ["zstd"])
+        #[serde(default)]
+        compression: Vec<String>,
+        /// Maximum message size client can handle
+        #[serde(skip_serializing_if = "Option::is_none")]
+        max_message_size: Option<usize>,
+    },
+
     /// Ping for keepalive
     Ping,
 }
@@ -347,6 +357,16 @@ pub enum ServerMessage {
         previews: Vec<crate::link_preview::LinkPreview>,
     },
 
+    /// Server acknowledgment of client capabilities
+    #[serde(rename = "capabilities_ack")]
+    CapabilitiesAck {
+        /// Selected compression algorithm (null if compression disabled)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        compression: Option<String>,
+        /// Compression threshold in bytes
+        threshold: usize,
+    },
+
     /// Error response
     #[serde(rename = "error")]
     Error { code: String, message: String },
@@ -376,6 +396,13 @@ impl ServerMessage {
         Self::Shutdown {
             reason: reason.into(),
             reconnect_after_seconds,
+        }
+    }
+
+    pub fn capabilities_ack(compression: Option<String>, threshold: usize) -> Self {
+        Self::CapabilitiesAck {
+            compression,
+            threshold,
         }
     }
 }

@@ -3,6 +3,7 @@
 pub mod attachment;
 pub mod blocking;
 pub mod cluster;
+pub mod compression;
 pub mod connection;
 pub mod conversation;
 pub mod email;

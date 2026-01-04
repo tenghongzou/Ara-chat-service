@@ -7,4 +7,5 @@ pub use settings::{
     WebSocketSettings, ClusterSettings, OtelSettings, CorsSettings,
     FileStorageSettings, StorageBackend,
     EmailSettings, EmailBackend, EmailTemplateSettings,
+    CompressionSettings, CompressionAlgorithm,
 };

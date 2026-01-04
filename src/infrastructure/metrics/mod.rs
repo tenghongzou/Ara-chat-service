@@ -298,6 +298,36 @@ lazy_static! {
         "chat_active_tasks",
         "Number of active background tasks"
     ).unwrap();
+
+    // ========================================
+    // Compression Metrics
+    // ========================================
+
+    /// Compression ratio (compressed/original size)
+    pub static ref COMPRESSION_RATIO: HistogramVec = register_histogram_vec!(
+        "chat_compression_ratio",
+        "Compression ratio (compressed/original size)",
+        &["algorithm"],
+        vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    ).unwrap();
+
+    /// Total compressed messages sent
+    pub static ref MESSAGES_COMPRESSED: IntCounter = register_int_counter!(
+        "chat_messages_compressed_total",
+        "Total number of compressed messages sent"
+    ).unwrap();
+
+    /// Total uncompressed messages sent (below threshold)
+    pub static ref MESSAGES_UNCOMPRESSED: IntCounter = register_int_counter!(
+        "chat_messages_uncompressed_total",
+        "Total number of uncompressed messages sent (below threshold)"
+    ).unwrap();
+
+    /// Total bytes saved by compression
+    pub static ref COMPRESSION_BYTES_SAVED: IntCounter = register_int_counter!(
+        "chat_compression_bytes_saved_total",
+        "Total bytes saved by compression"
+    ).unwrap();
 }
 
 // ========================================
@@ -393,6 +423,25 @@ pub fn record_partition_management(duration_secs: f64) {
 /// Record message stored
 pub fn record_message_stored() {
     MESSAGES_STORED.inc();
+}
+
+/// Record compression metrics
+pub fn record_compression(original_size: usize, compressed_size: usize) {
+    if compressed_size < original_size {
+        // Calculate ratio (lower is better)
+        let ratio = compressed_size as f64 / original_size as f64;
+        COMPRESSION_RATIO.with_label_values(&["zstd"]).observe(ratio);
+        MESSAGES_COMPRESSED.inc();
+        COMPRESSION_BYTES_SAVED.inc_by((original_size - compressed_size) as u64);
+    } else {
+        // Compression didn't help, sent uncompressed
+        MESSAGES_UNCOMPRESSED.inc();
+    }
+}
+
+/// Record uncompressed message (below threshold)
+pub fn record_uncompressed_message() {
+    MESSAGES_UNCOMPRESSED.inc();
 }
 
 /// Timer for measuring operation duration

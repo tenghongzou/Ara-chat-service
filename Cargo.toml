@@ -98,6 +98,9 @@ url = "2"
 # Email sending (SMTP)
 lettre = { version = "0.11", features = ["tokio1", "tokio1-native-tls", "builder"] }
 
+# Compression
+zstd = "0.13"
+
 # File upload - image processing
 image = "0.24"
 

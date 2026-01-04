@@ -35,6 +35,8 @@ pub struct Settings {
     pub gdpr: GdprSettings,
     #[serde(default)]
     pub email: EmailSettings,
+    #[serde(default)]
+    pub compression: CompressionSettings,
 }
 
 fn default_host() -> String {
@@ -565,6 +567,63 @@ fn default_email_app_url() -> String {
     "https://app.ara.com".to_string()
 }
 
+/// Compression algorithm type
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum CompressionAlgorithm {
+    #[default]
+    Zstd,
+    None,
+}
+
+/// Message compression settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct CompressionSettings {
+    /// Enable message compression
+    #[serde(default = "default_compression_enabled")]
+    pub enabled: bool,
+    /// Compression algorithm
+    #[serde(default)]
+    pub algorithm: CompressionAlgorithm,
+    /// Compression level (1-22 for zstd)
+    #[serde(default = "default_compression_level")]
+    pub level: u32,
+    /// Minimum message size to compress (bytes)
+    #[serde(default = "default_compression_threshold")]
+    pub threshold: usize,
+    /// Maximum decompressed message size (bytes, default 10MB)
+    #[serde(default = "default_max_decompressed_size")]
+    pub max_decompressed_size: usize,
+}
+
+impl Default for CompressionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_compression_enabled(),
+            algorithm: CompressionAlgorithm::default(),
+            level: default_compression_level(),
+            threshold: default_compression_threshold(),
+            max_decompressed_size: default_max_decompressed_size(),
+        }
+    }
+}
+
+fn default_compression_enabled() -> bool {
+    true
+}
+
+fn default_compression_level() -> u32 {
+    3
+}
+
+fn default_compression_threshold() -> usize {
+    1024 // 1KB
+}
+
+fn default_max_decompressed_size() -> usize {
+    10_485_760 // 10MB
+}
+
 impl Settings {
     /// Create minimal settings for testing (no external dependencies)
     #[cfg(any(test, feature = "test-utils"))]
@@ -604,6 +663,7 @@ impl Settings {
             notification: NotificationSettings::default(),
             gdpr: GdprSettings::default(),
             email: EmailSettings::default(),
+            compression: CompressionSettings::default(),
         }
     }
 
