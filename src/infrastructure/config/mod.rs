@@ -8,4 +8,5 @@ pub use settings::{
     FileStorageSettings, StorageBackend,
     EmailSettings, EmailBackend, EmailTemplateSettings,
     CompressionSettings, CompressionAlgorithm,
+    SubscriptionSettings,
 };

@@ -7,6 +7,7 @@ use dashmap::DashMap;
 use smallvec::SmallVec;
 use uuid::Uuid;
 
+use super::subscription::ConnectionSubscriptions;
 use super::types::{Connection, ConnectionInfo, ConnectionLimits};
 use crate::message::OutboundMessage;
 
@@ -185,6 +186,69 @@ impl ConnectionManager {
 
         count
     }
+
+    // ==================== Subscription-Aware Methods ====================
+
+    /// Send message to a user with subscription filtering
+    ///
+    /// Only delivers to connections that are subscribed to the conversation,
+    /// or in legacy mode (receive all), or if it's a system message.
+    ///
+    /// Returns the number of connections that received the message.
+    pub async fn send_to_user_filtered(
+        &self,
+        user_id: &Uuid,
+        conversation_id: &Uuid,
+        message: OutboundMessage,
+        is_system_message: bool,
+    ) -> usize {
+        let mut delivered = 0;
+
+        if let Some(connection_ids) = self.user_connections.get(user_id) {
+            for conn_id in connection_ids.iter() {
+                if let Some(conn) = self.connections.get(conn_id) {
+                    // Check subscription filter
+                    if conn.subscriptions.should_receive(conversation_id, is_system_message) {
+                        if conn.send(message.clone()).is_ok() {
+                            delivered += 1;
+                        }
+                    } else {
+                        // Track filtered messages (metrics)
+                        crate::metrics::SUBSCRIPTION_FILTERED.inc();
+                    }
+                }
+            }
+        }
+
+        delivered
+    }
+
+    /// Get the subscriptions for a specific connection
+    pub fn get_subscriptions(&self, connection_id: &Uuid) -> Option<Arc<ConnectionSubscriptions>> {
+        self.connections
+            .get(connection_id)
+            .map(|conn| conn.subscriptions.clone())
+    }
+
+    /// Check if any connection for a user is subscribed to a conversation
+    ///
+    /// Returns true if:
+    /// - Any connection is in legacy mode (receives all), or
+    /// - Any connection is explicitly subscribed to the conversation
+    pub fn has_user_subscribed(&self, user_id: &Uuid, conversation_id: &Uuid) -> bool {
+        if let Some(connection_ids) = self.user_connections.get(user_id) {
+            for conn_id in connection_ids.iter() {
+                if let Some(conn) = self.connections.get(conn_id) {
+                    if conn.subscriptions.is_legacy_mode()
+                        || conn.subscriptions.is_subscribed(conversation_id)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
 }
 
 impl Default for ConnectionManager {
@@ -209,7 +273,7 @@ mod tests {
 
     fn create_test_connection(user_id: Uuid) -> (Connection, mpsc::UnboundedReceiver<OutboundMessage>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        let conn = Connection::new(Uuid::new_v4(), user_id, "test-tenant".to_string(), tx);
+        let conn = Connection::new(Uuid::new_v4(), user_id, "test-tenant".to_string(), tx, 100);
         (conn, rx)
     }
 

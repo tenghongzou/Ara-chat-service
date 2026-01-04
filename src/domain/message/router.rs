@@ -113,9 +113,15 @@ impl MessageRouter {
                 continue;
             }
 
-            // Try local delivery first - muted users still receive WebSocket messages
+            // Try local delivery first with subscription filtering
+            // Muted users still receive WebSocket messages (if subscribed)
             if self.connection_manager.has_user(&user_id) {
-                self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
+                self.connection_manager.send_to_user_filtered(
+                    &user_id,
+                    &message.conversation_id,
+                    outbound.clone(),
+                    false, // not a system message
+                ).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
                 // Route through cluster with offline queue support
                 cluster_router.route_to_user_with_queue(
@@ -173,7 +179,12 @@ impl MessageRouter {
 
         for user_id in participants {
             if self.connection_manager.has_user(&user_id) {
-                self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
+                self.connection_manager.send_to_user_filtered(
+                    &user_id,
+                    &conversation_id,
+                    outbound.clone(),
+                    false, // not a system message
+                ).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
                 cluster_router.route_to_user_with_queue(
                     user_id,
@@ -187,6 +198,7 @@ impl MessageRouter {
     }
 
     /// Notify mentioned users
+    /// Mentions are treated as system messages and bypass subscription filter
     pub async fn notify_mentions(
         &self,
         message: &ChatMessage,
@@ -204,7 +216,13 @@ impl MessageRouter {
 
         for &user_id in mentions {
             if self.connection_manager.has_user(&user_id) {
-                self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
+                // Mentions bypass subscription filter (treated as system messages)
+                self.connection_manager.send_to_user_filtered(
+                    &user_id,
+                    &message.conversation_id,
+                    outbound.clone(),
+                    true, // system message - always delivered
+                ).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
                 cluster_router.route_to_user_with_queue(
                     user_id,
@@ -236,7 +254,12 @@ impl MessageRouter {
 
         for user_id in participants {
             if self.connection_manager.has_user(&user_id) {
-                self.connection_manager.send_to_user(&user_id, outbound.clone()).await;
+                self.connection_manager.send_to_user_filtered(
+                    &user_id,
+                    &message.conversation_id,
+                    outbound.clone(),
+                    false, // not a system message
+                ).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
                 cluster_router.route_to_user_with_queue(
                     user_id,
@@ -276,7 +299,12 @@ impl MessageRouter {
             }
 
             if self.connection_manager.has_user(&participant_id) {
-                self.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+                self.connection_manager.send_to_user_filtered(
+                    &participant_id,
+                    &conversation_id,
+                    outbound.clone(),
+                    false, // not a system message
+                ).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
                 cluster_router.route_to_user(participant_id, outbound.clone()).await
                     .map_err(|e| RouterError::ClusterError(e.to_string()))?;
@@ -313,7 +341,12 @@ impl MessageRouter {
 
         for participant_id in participants {
             if self.connection_manager.has_user(&participant_id) {
-                self.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+                self.connection_manager.send_to_user_filtered(
+                    &participant_id,
+                    &conversation_id,
+                    outbound.clone(),
+                    false, // not a system message
+                ).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
                 // Thread updates are transient, no need to queue for offline users
                 cluster_router.route_to_user(participant_id, outbound.clone()).await
@@ -348,7 +381,12 @@ impl MessageRouter {
 
         for participant_id in participants {
             if self.connection_manager.has_user(&participant_id) {
-                self.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+                self.connection_manager.send_to_user_filtered(
+                    &participant_id,
+                    &conversation_id,
+                    outbound.clone(),
+                    false, // not a system message
+                ).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
                 // Pin notifications should be queued for offline users
                 cluster_router.route_to_user_with_queue(
@@ -384,7 +422,12 @@ impl MessageRouter {
 
         for participant_id in participants {
             if self.connection_manager.has_user(&participant_id) {
-                self.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+                self.connection_manager.send_to_user_filtered(
+                    &participant_id,
+                    &conversation_id,
+                    outbound.clone(),
+                    false, // not a system message
+                ).await;
             } else if let Some(ref cluster_router) = self.cluster_router {
                 // Unpin notifications should be queued for offline users
                 cluster_router.route_to_user_with_queue(

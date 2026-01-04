@@ -157,6 +157,21 @@ pub enum ClientMessage {
         max_message_size: Option<usize>,
     },
 
+    /// Subscribe to conversation updates (messages, typing, etc.)
+    ///
+    /// Switches the connection to explicit subscription mode.
+    /// Only subscribed conversations will receive messages.
+    SubscribeConversations {
+        /// Conversation IDs to subscribe to
+        conversation_ids: Vec<Uuid>,
+    },
+
+    /// Unsubscribe from conversation updates
+    UnsubscribeConversations {
+        /// Conversation IDs to unsubscribe from
+        conversation_ids: Vec<Uuid>,
+    },
+
     /// Ping for keepalive
     Ping,
 }
@@ -367,6 +382,17 @@ pub enum ServerMessage {
         threshold: usize,
     },
 
+    /// Subscription status update confirmation
+    #[serde(rename = "subscription_updated")]
+    SubscriptionUpdated {
+        /// Conversations that were newly subscribed
+        subscribed: Vec<Uuid>,
+        /// Conversations that were unsubscribed
+        unsubscribed: Vec<Uuid>,
+        /// Total active subscriptions for this connection
+        total_subscriptions: usize,
+    },
+
     /// Error response
     #[serde(rename = "error")]
     Error { code: String, message: String },
@@ -403,6 +429,18 @@ impl ServerMessage {
         Self::CapabilitiesAck {
             compression,
             threshold,
+        }
+    }
+
+    pub fn subscription_updated(
+        subscribed: Vec<Uuid>,
+        unsubscribed: Vec<Uuid>,
+        total_subscriptions: usize,
+    ) -> Self {
+        Self::SubscriptionUpdated {
+            subscribed,
+            unsubscribed,
+            total_subscriptions,
         }
     }
 }

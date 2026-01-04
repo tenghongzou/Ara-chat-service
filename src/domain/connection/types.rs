@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::message::OutboundMessage;
+use super::subscription::ConnectionSubscriptions;
 
 /// Configuration limits for connections
 #[derive(Debug, Clone)]
@@ -42,6 +43,8 @@ pub struct Connection {
     pub tenant_id: String,
     pub sender: mpsc::UnboundedSender<OutboundMessage>,
     pub connected_at: i64,
+    /// Per-connection conversation subscriptions
+    pub subscriptions: Arc<ConnectionSubscriptions>,
 }
 
 impl Connection {
@@ -50,6 +53,7 @@ impl Connection {
         user_id: Uuid,
         tenant_id: String,
         sender: mpsc::UnboundedSender<OutboundMessage>,
+        max_subscriptions: usize,
     ) -> Self {
         Self {
             id,
@@ -57,6 +61,7 @@ impl Connection {
             tenant_id,
             sender,
             connected_at: chrono::Utc::now().timestamp_millis(),
+            subscriptions: Arc::new(ConnectionSubscriptions::new(max_subscriptions)),
         }
     }
 

@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.11.0] - 2026-01-05
+
+### Added
+- **Connection Multiplexing - Conversation Subscription**: Per-connection conversation subscriptions for bandwidth optimization
+  - Two subscription modes:
+    - **Legacy mode** (default): Receive all messages - backward compatible with existing clients
+    - **Explicit mode**: Only receive messages for subscribed conversations - enabled on first SubscribeConversations
+  - Per-connection subscription management with O(1) DashSet lookup
+  - Max 100 subscriptions per connection (configurable, ~3.2KB memory overhead)
+  - Auto-subscribe triggers:
+    - On FetchHistory: Auto-subscribe to the conversation being fetched
+    - On SendMessage: Auto-subscribe to the conversation being messaged
+  - System messages (mentions, etc.) bypass subscription filter and are always delivered
+  - WebSocket client messages:
+    - `SubscribeConversations { conversation_ids: Vec<Uuid> }` - Subscribe to conversations
+    - `UnsubscribeConversations { conversation_ids: Vec<Uuid> }` - Unsubscribe from conversations
+  - WebSocket server message:
+    - `SubscriptionUpdated { subscribed, unsubscribed, total_subscriptions }` - Confirmation
+  - Subscription filtering at MessageRouter layer for all message types:
+    - Regular messages, message edits, recalls
+    - Typing indicators, thread updates
+    - Pin/unpin notifications
+  - Subscription metrics for monitoring:
+    - `chat_subscription_filtered_total` - Messages filtered (not delivered) due to subscription
+    - `chat_subscription_changes_total` - Subscribe/unsubscribe operations by action
+    - `chat_subscription_count` - Histogram of subscriptions per connection
+  - Configurable via `CHAT__SUBSCRIPTION__*` environment variables:
+    - `CHAT__SUBSCRIPTION__MAX_SUBSCRIPTIONS` - Max subscriptions per connection (default: 100)
+    - `CHAT__SUBSCRIPTION__AUTO_SUBSCRIBE_ON_FETCH_HISTORY` - Auto-subscribe on FetchHistory (default: true)
+    - `CHAT__SUBSCRIPTION__AUTO_SUBSCRIBE_ON_SEND_MESSAGE` - Auto-subscribe on SendMessage (default: true)
+  - Expected bandwidth savings: 50-80% for mobile users with many conversations
+
 ## [1.10.0] - 2026-01-05
 
 ### Added
@@ -235,6 +267,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 1.11.0 | 2026-01-05 | Connection multiplexing (conversation subscription) |
 | 1.10.0 | 2026-01-05 | Message compression (zstd) |
 | 1.9.0 | 2026-01-04 | Email notifications for offline users |
 | 1.8.0 | 2026-01-04 | Custom emoji support |

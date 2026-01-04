@@ -228,6 +228,18 @@ Project status and planned features for Ara Chat Service.
 - [x] WebSocket: Capabilities, CapabilitiesAck / WebSocket 訊息
 - [x] Configurable via `CHAT__COMPRESSION__*` environment variables
 
+### Connection Multiplexing - Conversation Subscription / 連線多工 - 對話訂閱 *(v1.11.0)*
+- [x] Per-connection conversation subscriptions / 每連線對話訂閱
+- [x] Legacy mode (receive all) for backward compatibility / 向後兼容舊模式
+- [x] Explicit mode (subscribed only) for bandwidth optimization / 顯式模式（僅訂閱）
+- [x] Auto-subscribe on FetchHistory / 獲取歷史時自動訂閱
+- [x] Auto-subscribe on SendMessage / 發送訊息時自動訂閱
+- [x] System messages bypass subscription filter / 系統訊息繞過訂閱過濾
+- [x] Max 100 subscriptions per connection / 每連線最多 100 個訂閱
+- [x] Subscription metrics tracking / 訂閱指標追蹤
+- [x] WebSocket: SubscribeConversations, UnsubscribeConversations, SubscriptionUpdated
+- [x] Configurable via `CHAT__SUBSCRIPTION__*` environment variables
+
 ---
 
 ## Planned Features / 計劃中功能
@@ -274,7 +286,7 @@ Project status and planned features for Ara Chat Service.
 
 #### Performance / 效能
 - [x] Message compression / 訊息壓縮 *(v1.10.0)*
-- [ ] Connection multiplexing / 連線多工
+- [x] Connection multiplexing (conversation subscription) / 連線多工（對話訂閱） *(v1.11.0)*
 - [ ] Lazy loading for large groups / 大群組懶載入
 
 #### UI/UX Support / UI/UX 支援
@@ -349,6 +361,9 @@ Project status and planned features for Ara Chat Service.
 
 ### v1.10.0 (Completed)
 - ~~Message compression~~ *(Completed: application-level zstd compression, configurable threshold/level, capability negotiation, backward compatible, binary format, compression metrics)*
+
+### v1.11.0 (Completed)
+- ~~Connection multiplexing~~ *(Completed: per-connection conversation subscriptions, legacy/explicit modes, auto-subscribe on FetchHistory/SendMessage, system message bypass, subscription metrics)*
 
 ### v2.0.0 (Future)
 - End-to-end encryption

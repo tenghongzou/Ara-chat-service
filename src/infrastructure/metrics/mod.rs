@@ -328,6 +328,30 @@ lazy_static! {
         "chat_compression_bytes_saved_total",
         "Total bytes saved by compression"
     ).unwrap();
+
+    // ========================================
+    // Subscription Metrics
+    // ========================================
+
+    /// Messages filtered due to subscription
+    pub static ref SUBSCRIPTION_FILTERED: IntCounter = register_int_counter!(
+        "chat_subscription_filtered_total",
+        "Messages filtered due to subscription (not delivered)"
+    ).unwrap();
+
+    /// Subscription changes (subscribe/unsubscribe operations)
+    pub static ref SUBSCRIPTION_CHANGES: CounterVec = register_counter_vec!(
+        "chat_subscription_changes_total",
+        "Subscription add/remove operations",
+        &["action"]  // subscribe, unsubscribe
+    ).unwrap();
+
+    /// Active subscriptions per connection (histogram)
+    pub static ref SUBSCRIPTION_COUNT: Histogram = register_histogram!(
+        "chat_subscription_count",
+        "Number of subscriptions per connection",
+        vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0]
+    ).unwrap();
 }
 
 // ========================================
@@ -442,6 +466,16 @@ pub fn record_compression(original_size: usize, compressed_size: usize) {
 /// Record uncompressed message (below threshold)
 pub fn record_uncompressed_message() {
     MESSAGES_UNCOMPRESSED.inc();
+}
+
+/// Record subscription change
+pub fn record_subscription_change(action: &str, count: usize) {
+    SUBSCRIPTION_CHANGES.with_label_values(&[action]).inc_by(count as f64);
+}
+
+/// Record subscription count for a connection
+pub fn record_subscription_count(count: usize) {
+    SUBSCRIPTION_COUNT.observe(count as f64);
 }
 
 /// Timer for measuring operation duration

@@ -65,8 +65,9 @@ async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
     // Create channel for outbound messages
     let (tx, mut rx) = mpsc::unbounded_channel::<OutboundMessage>();
 
-    // Create and register connection
-    let connection = Connection::new(connection_id, user_id, tenant_id.clone(), tx);
+    // Create and register connection with subscription settings
+    let max_subscriptions = state.settings.subscription.max_subscriptions;
+    let connection = Connection::new(connection_id, user_id, tenant_id.clone(), tx, max_subscriptions);
     if let Err(e) = state.connection_manager.register(connection) {
         tracing::warn!(
             user_id = %user_id,
@@ -189,7 +190,7 @@ async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
                                     state.connection_manager.send_to_user(&user_id, ack.into()).await;
                                 }
                             } else {
-                                handle_client_message(user_id, msg, &state).await;
+                                handle_client_message(connection_id, user_id, msg, &state).await;
                             }
                         }
                         Err(e) => {
@@ -206,7 +207,7 @@ async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
                                 match serde_json::from_str::<ClientMessage>(&text) {
                                     Ok(msg) => {
                                         tracing::debug!(user_id = %user_id, msg_type = ?std::mem::discriminant(&msg), "Received compressed client message");
-                                        handle_client_message(user_id, msg, &state).await;
+                                        handle_client_message(connection_id, user_id, msg, &state).await;
                                     }
                                     Err(e) => {
                                         tracing::warn!(user_id = %user_id, error = %e, "Failed to parse decompressed message");
@@ -273,11 +274,19 @@ async fn handle_socket(socket: WebSocket, claims: Claims, state: AppState) {
     );
 }
 
-async fn handle_client_message(user_id: Uuid, msg: ClientMessage, state: &AppState) {
+async fn handle_client_message(connection_id: Uuid, user_id: Uuid, msg: ClientMessage, state: &AppState) {
     match msg {
         ClientMessage::Ping => {
             let pong = ServerMessage::Pong;
             state.connection_manager.send_to_user(&user_id, pong.into()).await;
+        }
+
+        ClientMessage::SubscribeConversations { conversation_ids } => {
+            handle_subscribe_conversations(connection_id, user_id, conversation_ids, state).await;
+        }
+
+        ClientMessage::UnsubscribeConversations { conversation_ids } => {
+            handle_unsubscribe_conversations(connection_id, user_id, conversation_ids, state).await;
         }
 
         ClientMessage::SendMessage {
@@ -289,6 +298,7 @@ async fn handle_client_message(user_id: Uuid, msg: ClientMessage, state: &AppSta
             mentions,
         } => {
             handle_send_message(
+                connection_id,
                 user_id,
                 conversation_id,
                 content,
@@ -319,7 +329,7 @@ async fn handle_client_message(user_id: Uuid, msg: ClientMessage, state: &AppSta
             before,
             limit,
         } => {
-            handle_fetch_history(user_id, conversation_id, before, limit, state).await;
+            handle_fetch_history(connection_id, user_id, conversation_id, before, limit, state).await;
         }
 
         ClientMessage::FetchConversations { before, limit } => {
@@ -427,6 +437,7 @@ async fn handle_client_message(user_id: Uuid, msg: ClientMessage, state: &AppSta
 }
 
 async fn handle_send_message(
+    connection_id: Uuid,
     user_id: Uuid,
     conversation_id: Uuid,
     content: String,
@@ -442,6 +453,13 @@ async fn handle_send_message(
         content_len = content.len(),
         "Processing SendMessage"
     );
+
+    // Auto-subscribe to conversation if enabled
+    if state.settings.subscription.auto_subscribe_on_send_message {
+        if let Some(subs) = state.connection_manager.get_subscriptions(&connection_id) {
+            let _ = subs.subscribe(&[conversation_id]);
+        }
+    }
 
     // Validate content length
     if content.is_empty() {
@@ -658,12 +676,20 @@ async fn handle_typing(
 }
 
 async fn handle_fetch_history(
+    connection_id: Uuid,
     user_id: Uuid,
     conversation_id: Uuid,
     before: Option<Uuid>,
     limit: Option<u32>,
     state: &AppState,
 ) {
+    // Auto-subscribe to conversation if enabled
+    if state.settings.subscription.auto_subscribe_on_fetch_history {
+        if let Some(subs) = state.connection_manager.get_subscriptions(&connection_id) {
+            let _ = subs.subscribe(&[conversation_id]);
+        }
+    }
+
     // Verify user is a participant
     if let Some(ref conv_service) = state.conversation_service {
         match conv_service.is_participant(conversation_id, user_id).await {
@@ -1302,6 +1328,135 @@ async fn handle_unmute_conversation(
             send_error(user_id, "UNMUTE_FAILED", e.to_string(), state).await;
         }
     }
+}
+
+// ==================== Conversation Subscription Handlers ====================
+
+/// Handle subscribe to conversations request
+async fn handle_subscribe_conversations(
+    connection_id: Uuid,
+    user_id: Uuid,
+    conversation_ids: Vec<Uuid>,
+    state: &AppState,
+) {
+    let subscriptions = match state.connection_manager.get_subscriptions(&connection_id) {
+        Some(s) => s,
+        None => {
+            tracing::warn!(
+                connection_id = %connection_id,
+                user_id = %user_id,
+                "Connection not found for subscription"
+            );
+            return;
+        }
+    };
+
+    // Validate that user is a participant in all requested conversations
+    let mut valid_ids: Vec<Uuid> = Vec::new();
+    if let Some(ref conv_service) = state.conversation_service {
+        for conv_id in &conversation_ids {
+            match conv_service.is_participant(*conv_id, user_id).await {
+                Ok(true) => valid_ids.push(*conv_id),
+                Ok(false) => {
+                    tracing::debug!(
+                        user_id = %user_id,
+                        conversation_id = %conv_id,
+                        "User not a participant, skipping subscription"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        user_id = %user_id,
+                        conversation_id = %conv_id,
+                        error = %e,
+                        "Failed to check participation"
+                    );
+                }
+            }
+        }
+    } else {
+        // No conversation service - allow all subscriptions
+        valid_ids = conversation_ids;
+    }
+
+    if valid_ids.is_empty() {
+        // Send empty response
+        let response = ServerMessage::SubscriptionUpdated {
+            subscribed: vec![],
+            unsubscribed: vec![],
+            total_subscriptions: subscriptions.len(),
+        };
+        state.connection_manager.send_to_user(&user_id, response.into()).await;
+        return;
+    }
+
+    // Subscribe to valid conversations
+    let result = subscriptions.subscribe(&valid_ids);
+
+    // Record metrics
+    if !result.added.is_empty() {
+        crate::metrics::record_subscription_change("subscribe", result.added.len());
+    }
+    crate::metrics::record_subscription_count(result.total_subscriptions);
+
+    // Send confirmation
+    let response = ServerMessage::SubscriptionUpdated {
+        subscribed: result.added,
+        unsubscribed: vec![],
+        total_subscriptions: result.total_subscriptions,
+    };
+    state.connection_manager.send_to_user(&user_id, response.into()).await;
+
+    tracing::debug!(
+        connection_id = %connection_id,
+        user_id = %user_id,
+        total = result.total_subscriptions,
+        "Subscriptions updated"
+    );
+}
+
+/// Handle unsubscribe from conversations request
+async fn handle_unsubscribe_conversations(
+    connection_id: Uuid,
+    user_id: Uuid,
+    conversation_ids: Vec<Uuid>,
+    state: &AppState,
+) {
+    let subscriptions = match state.connection_manager.get_subscriptions(&connection_id) {
+        Some(s) => s,
+        None => {
+            tracing::warn!(
+                connection_id = %connection_id,
+                user_id = %user_id,
+                "Connection not found for unsubscription"
+            );
+            return;
+        }
+    };
+
+    // Unsubscribe from conversations
+    let result = subscriptions.unsubscribe(&conversation_ids);
+
+    // Record metrics
+    if !result.removed.is_empty() {
+        crate::metrics::record_subscription_change("unsubscribe", result.removed.len());
+    }
+    crate::metrics::record_subscription_count(result.total_subscriptions);
+
+    // Send confirmation
+    let response = ServerMessage::SubscriptionUpdated {
+        subscribed: vec![],
+        unsubscribed: result.removed,
+        total_subscriptions: result.total_subscriptions,
+    };
+    state.connection_manager.send_to_user(&user_id, response.into()).await;
+
+    tracing::debug!(
+        connection_id = %connection_id,
+        user_id = %user_id,
+        total = result.total_subscriptions,
+        "Unsubscriptions processed"
+    );
 }
 
 // ==================== User Blocking Handlers ====================

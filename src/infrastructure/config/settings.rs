@@ -37,6 +37,8 @@ pub struct Settings {
     pub email: EmailSettings,
     #[serde(default)]
     pub compression: CompressionSettings,
+    #[serde(default)]
+    pub subscription: SubscriptionSettings,
 }
 
 fn default_host() -> String {
@@ -624,6 +626,34 @@ fn default_max_decompressed_size() -> usize {
     10_485_760 // 10MB
 }
 
+/// Conversation subscription settings for connection multiplexing
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubscriptionSettings {
+    /// Maximum subscriptions per connection (default: 100)
+    #[serde(default = "default_max_subscriptions")]
+    pub max_subscriptions: usize,
+    /// Auto-subscribe on FetchHistory
+    #[serde(default = "default_true")]
+    pub auto_subscribe_on_fetch_history: bool,
+    /// Auto-subscribe on SendMessage
+    #[serde(default = "default_true")]
+    pub auto_subscribe_on_send_message: bool,
+}
+
+impl Default for SubscriptionSettings {
+    fn default() -> Self {
+        Self {
+            max_subscriptions: default_max_subscriptions(),
+            auto_subscribe_on_fetch_history: true,
+            auto_subscribe_on_send_message: true,
+        }
+    }
+}
+
+fn default_max_subscriptions() -> usize {
+    100
+}
+
 impl Settings {
     /// Create minimal settings for testing (no external dependencies)
     #[cfg(any(test, feature = "test-utils"))]
@@ -664,6 +694,7 @@ impl Settings {
             gdpr: GdprSettings::default(),
             email: EmailSettings::default(),
             compression: CompressionSettings::default(),
+            subscription: SubscriptionSettings::default(),
         }
     }
 
