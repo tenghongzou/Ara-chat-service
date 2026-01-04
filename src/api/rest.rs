@@ -669,3 +669,213 @@ pub async fn search_messages(
         }
     }
 }
+
+// --- Thread API ---
+
+#[derive(Deserialize)]
+pub struct ThreadQuery {
+    pub limit: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub struct ThreadResponse {
+    pub root_message: ChatMessage,
+    pub replies: Vec<ChatMessage>,
+    pub has_more: bool,
+    pub total_replies: i32,
+}
+
+/// Get thread replies for a message
+pub async fn get_thread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(message_id): Path<Uuid>,
+    Query(query): Query<ThreadQuery>,
+) -> Result<Json<ThreadResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let storage = state.message_storage.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    // Get the root message first
+    let root_message = match storage.get_message(message_id).await {
+        Ok(Some(msg)) => msg,
+        Ok(None) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    code: "MESSAGE_NOT_FOUND".to_string(),
+                    message: "Message not found".to_string(),
+                }),
+            ));
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "FETCH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ));
+        }
+    };
+
+    // Verify user is a participant in the conversation
+    if let Some(ref conv_service) = state.conversation_service {
+        match conv_service.is_participant(root_message.conversation_id, user_id).await {
+            Ok(false) => {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        code: "NOT_PARTICIPANT".to_string(),
+                        message: "You are not a participant in this conversation".to_string(),
+                    }),
+                ));
+            }
+            Err(e) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        code: "CHECK_FAILED".to_string(),
+                        message: e.to_string(),
+                    }),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    let limit = query.limit.unwrap_or(50).min(100);
+
+    // Get reply count
+    let total_replies = storage.get_reply_count(message_id).await.unwrap_or(0);
+
+    // Get thread replies
+    match storage.get_thread_replies(message_id, None, limit).await {
+        Ok((replies, has_more)) => Ok(Json(ThreadResponse {
+            root_message,
+            replies,
+            has_more,
+            total_replies,
+        })),
+        Err(e) => {
+            tracing::error!(user_id = %user_id, message_id = %message_id, error = %e, "Failed to fetch thread");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "FETCH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct ReplyContextResponse {
+    pub id: Uuid,
+    pub sender_id: Uuid,
+    pub content_preview: String,
+    pub content_type: ContentType,
+}
+
+/// Get reply context for a message (preview of original message)
+pub async fn get_reply_context(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<ReplyContextResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    let storage = state.message_storage.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    // Get the message first to check conversation membership
+    let message = match storage.get_message(message_id).await {
+        Ok(Some(msg)) => msg,
+        Ok(None) => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    code: "MESSAGE_NOT_FOUND".to_string(),
+                    message: "Message not found".to_string(),
+                }),
+            ));
+        }
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "FETCH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ));
+        }
+    };
+
+    // Verify user is a participant
+    if let Some(ref conv_service) = state.conversation_service {
+        match conv_service.is_participant(message.conversation_id, user_id).await {
+            Ok(false) => {
+                return Err((
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        code: "NOT_PARTICIPANT".to_string(),
+                        message: "You are not a participant in this conversation".to_string(),
+                    }),
+                ));
+            }
+            Err(e) => {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        code: "CHECK_FAILED".to_string(),
+                        message: e.to_string(),
+                    }),
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    // Get reply context (using the message itself as the context)
+    match storage.get_reply_context(message_id).await {
+        Ok(Some(context)) => Ok(Json(ReplyContextResponse {
+            id: context.id,
+            sender_id: context.sender_id,
+            content_preview: context.content_preview,
+            content_type: context.content_type,
+        })),
+        Ok(None) => Err((
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                code: "MESSAGE_NOT_FOUND".to_string(),
+                message: "Message not found or deleted".to_string(),
+            }),
+        )),
+        Err(e) => {
+            tracing::error!(user_id = %user_id, message_id = %message_id, error = %e, "Failed to fetch reply context");
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "FETCH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            ))
+        }
+    }
+}

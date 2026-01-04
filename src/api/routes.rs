@@ -48,6 +48,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/unread", get(rest::get_unread_counts))
         // REST API - Search
         .route("/api/v1/search/messages", get(rest::search_messages))
+        // REST API - Threads
+        .route("/api/v1/messages/{id}/thread", get(rest::get_thread))
+        .route("/api/v1/messages/{id}/context", get(rest::get_reply_context))
         // Apply middleware
         .layer(middleware::from_fn(request_id_middleware))
         .with_state(state)

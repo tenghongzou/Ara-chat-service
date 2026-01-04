@@ -226,6 +226,16 @@ pub enum ServerMessage {
     #[serde(rename = "pong")]
     Pong,
 
+    /// Thread info updated (new reply added to a message)
+    #[serde(rename = "thread_updated")]
+    ThreadUpdated {
+        conversation_id: Uuid,
+        message_id: Uuid,
+        reply_count: i32,
+        last_reply_at: i64,
+        last_reply_sender_id: Uuid,
+    },
+
     /// Error response
     #[serde(rename = "error")]
     Error { code: String, message: String },
@@ -320,6 +330,12 @@ pub struct ChatMessage {
     pub updated_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reply_to_id: Option<Uuid>,
+    /// Preview of the message being replied to
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_context: Option<ReplyContext>,
+    /// Thread metadata (reply count, last reply info)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread_info: Option<ThreadInfo>,
     #[serde(default)]
     pub mentions: Vec<Uuid>,
     #[serde(default)]
@@ -388,6 +404,55 @@ pub struct ReactionInfo {
     pub count: u32,
     pub users: Vec<Uuid>,
     pub user_reacted: bool,
+}
+
+/// Thread metadata for a message (reply count, last reply info)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThreadInfo {
+    /// Number of replies to this message
+    pub reply_count: i32,
+    /// Timestamp of the last reply (milliseconds)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reply_at: Option<i64>,
+    /// Sender ID of the last reply
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_reply_sender_id: Option<Uuid>,
+}
+
+/// Reply context - preview of the original message being replied to
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplyContext {
+    /// ID of the original message
+    pub id: Uuid,
+    /// Sender of the original message
+    pub sender_id: Uuid,
+    /// Truncated content preview (max 100 chars)
+    pub content_preview: String,
+    /// Content type of the original message
+    pub content_type: ContentType,
+}
+
+impl ReplyContext {
+    /// Maximum length for content preview
+    pub const MAX_PREVIEW_LENGTH: usize = 100;
+
+    /// Create a new reply context with truncated content
+    pub fn new(id: Uuid, sender_id: Uuid, content: &str, content_type: ContentType) -> Self {
+        let content_preview = if content.len() > Self::MAX_PREVIEW_LENGTH {
+            let mut preview = content.chars().take(Self::MAX_PREVIEW_LENGTH).collect::<String>();
+            preview.push_str("...");
+            preview
+        } else {
+            content.to_string()
+        };
+
+        Self {
+            id,
+            sender_id,
+            content_preview,
+            content_type,
+        }
+    }
 }
 
 /// Unread sync data for REST API response
@@ -693,6 +758,8 @@ mod tests {
             created_at: 1704067200,
             updated_at: None,
             reply_to_id: None,
+            reply_context: None,
+            thread_info: None,
             mentions: vec![],
             reactions: HashMap::new(),
             recalled_at: None,
@@ -705,6 +772,8 @@ mod tests {
         assert!(!json.contains("updated_at"));
         assert!(!json.contains("reply_to_id"));
         assert!(!json.contains("recalled_at"));
+        assert!(!json.contains("reply_context"));
+        assert!(!json.contains("thread_info"));
     }
 
     #[test]
@@ -722,6 +791,8 @@ mod tests {
             created_at: 1704067200,
             updated_at: None,
             reply_to_id: None,
+            reply_context: None,
+            thread_info: None,
             mentions: vec![],
             reactions,
             recalled_at: None,
@@ -729,6 +800,77 @@ mod tests {
 
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("👍"));
+    }
+
+    // ==================== ThreadInfo and ReplyContext Tests ====================
+
+    #[test]
+    fn test_thread_info_serialization() {
+        let info = ThreadInfo {
+            reply_count: 5,
+            last_reply_at: Some(1704067200000),
+            last_reply_sender_id: Some(Uuid::new_v4()),
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"reply_count\":5"));
+        assert!(json.contains("last_reply_at"));
+    }
+
+    #[test]
+    fn test_thread_info_without_replies() {
+        let info = ThreadInfo {
+            reply_count: 0,
+            last_reply_at: None,
+            last_reply_sender_id: None,
+        };
+
+        let json = serde_json::to_string(&info).unwrap();
+        assert!(json.contains("\"reply_count\":0"));
+        assert!(!json.contains("last_reply_at"));
+    }
+
+    #[test]
+    fn test_reply_context_truncation() {
+        let long_content = "a".repeat(200);
+        let context = ReplyContext::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            &long_content,
+            ContentType::Text,
+        );
+
+        assert!(context.content_preview.len() <= ReplyContext::MAX_PREVIEW_LENGTH + 3); // +3 for "..."
+        assert!(context.content_preview.ends_with("..."));
+    }
+
+    #[test]
+    fn test_reply_context_no_truncation() {
+        let short_content = "Hello world";
+        let context = ReplyContext::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            short_content,
+            ContentType::Text,
+        );
+
+        assert_eq!(context.content_preview, short_content);
+        assert!(!context.content_preview.ends_with("..."));
+    }
+
+    #[test]
+    fn test_thread_updated_server_message() {
+        let msg = ServerMessage::ThreadUpdated {
+            conversation_id: Uuid::new_v4(),
+            message_id: Uuid::new_v4(),
+            reply_count: 3,
+            last_reply_at: 1704067200000,
+            last_reply_sender_id: Uuid::new_v4(),
+        };
+
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("\"type\":\"thread_updated\""));
+        assert!(json.contains("\"reply_count\":3"));
     }
 
     // ==================== UnreadSyncData Tests ====================

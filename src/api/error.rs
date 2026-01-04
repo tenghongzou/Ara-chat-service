@@ -61,6 +61,7 @@ pub enum ApiError {
     // Validation errors (400)
     BadRequest(&'static str, String),
     Validation(ValidationError),
+    InvalidReplyTarget,
 
     // Conflict errors (409)
     Conflict(&'static str),
@@ -95,6 +96,7 @@ impl ApiError {
             Self::ConversationNotFound => "CONVERSATION_NOT_FOUND",
             Self::BadRequest(code, _) => code,
             Self::Validation(v) => v.code(),
+            Self::InvalidReplyTarget => "INVALID_REPLY_TARGET",
             Self::Conflict(_) => "CONFLICT",
             Self::AlreadyRecalled => "ALREADY_RECALLED",
             Self::RateLimited => "RATE_LIMITED",
@@ -118,7 +120,7 @@ impl ApiError {
             Self::NotFound(_) | Self::MessageNotFound | Self::ConversationNotFound => {
                 StatusCode::NOT_FOUND
             }
-            Self::BadRequest(_, _) | Self::Validation(_) => StatusCode::BAD_REQUEST,
+            Self::BadRequest(_, _) | Self::Validation(_) | Self::InvalidReplyTarget => StatusCode::BAD_REQUEST,
             Self::Conflict(_) | Self::AlreadyRecalled => StatusCode::CONFLICT,
             Self::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             Self::WindowExpired { .. } => StatusCode::UNPROCESSABLE_ENTITY,
@@ -142,6 +144,7 @@ impl ApiError {
             Self::ConversationNotFound => "Conversation not found".to_string(),
             Self::BadRequest(_, msg) => msg.clone(),
             Self::Validation(v) => v.to_string(),
+            Self::InvalidReplyTarget => "Invalid reply target: message not found, deleted, or in different conversation".to_string(),
             Self::Conflict(msg) => msg.to_string(),
             Self::AlreadyRecalled => "Message has already been recalled".to_string(),
             Self::RateLimited => "Too many requests, please try again later".to_string(),
@@ -223,6 +226,7 @@ impl From<MessageHandlerError> for ApiError {
                 kind: "edit",
                 allowed_seconds,
             },
+            MessageHandlerError::InvalidReplyTarget => Self::InvalidReplyTarget,
             MessageHandlerError::Storage(e) => Self::from(e),
             MessageHandlerError::Routing(e) => Self::from(e),
             MessageHandlerError::Conversation(e) => Self::from(e),

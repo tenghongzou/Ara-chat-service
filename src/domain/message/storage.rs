@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 
-use super::types::{ChatMessage, ContentType};
+use super::types::{ChatMessage, ContentType, ReplyContext, ThreadInfo};
 
 /// Message row from database
 #[derive(Debug, FromRow)]
@@ -40,6 +40,8 @@ impl MessageRow {
             created_at: self.created_at.timestamp_millis(),
             updated_at: self.updated_at.map(|t| t.timestamp_millis()),
             reply_to_id: self.reply_to_id,
+            reply_context: None,  // Loaded separately when needed
+            thread_info: None,    // Loaded separately when needed
             mentions: self.mentions,
             reactions: Default::default(), // Loaded separately
             recalled_at: self.deleted_at.map(|t| t.timestamp_millis()),
@@ -492,6 +494,226 @@ impl MessageStorage {
 
         Ok((results, total))
     }
+
+    // ==================== Thread-related Methods ====================
+
+    /// Validate that a reply target exists and is in the same conversation
+    /// Returns true if valid, false if not found or in different conversation
+    pub async fn validate_reply_target(
+        &self,
+        reply_to_id: Uuid,
+        conversation_id: Uuid,
+    ) -> Result<bool, StorageError> {
+        let result: Option<(Uuid, Option<DateTime<Utc>>)> = sqlx::query_as(
+            r#"
+            SELECT conversation_id, deleted_at
+            FROM messages
+            WHERE id = $1 AND tenant_id = $2
+            "#,
+        )
+        .bind(reply_to_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        match result {
+            Some((msg_conv_id, deleted_at)) => {
+                // Check if message is in the same conversation and not deleted
+                Ok(msg_conv_id == conversation_id && deleted_at.is_none())
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Get reply context (preview of original message) for a reply
+    pub async fn get_reply_context(
+        &self,
+        reply_to_id: Uuid,
+    ) -> Result<Option<ReplyContext>, StorageError> {
+        let row: Option<(Uuid, Uuid, String, String)> = sqlx::query_as(
+            r#"
+            SELECT id, sender_id, content, content_type
+            FROM messages
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(reply_to_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.map(|(id, sender_id, content, content_type)| {
+            let ct = match content_type.as_str() {
+                "image" => ContentType::Image,
+                "file" => ContentType::File,
+                "system" => ContentType::System,
+                _ => ContentType::Text,
+            };
+            ReplyContext::new(id, sender_id, &content, ct)
+        }))
+    }
+
+    /// Get the number of replies to a message
+    pub async fn get_reply_count(&self, message_id: Uuid) -> Result<i32, StorageError> {
+        let count: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM messages
+            WHERE reply_to_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(message_id)
+        .bind(&self.tenant_id)
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(count.0 as i32)
+    }
+
+    /// Get thread info for a message (reply count, last reply info)
+    pub async fn get_thread_info(&self, message_id: Uuid) -> Result<Option<ThreadInfo>, StorageError> {
+        // Get reply count and last reply info in a single query
+        let row: Option<(i64, Option<DateTime<Utc>>, Option<Uuid>)> = sqlx::query_as(
+            r#"
+            SELECT
+                COUNT(*) as reply_count,
+                MAX(created_at) as last_reply_at,
+                (SELECT sender_id FROM messages
+                 WHERE reply_to_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+                 ORDER BY created_at DESC LIMIT 1) as last_reply_sender_id
+            FROM messages
+            WHERE reply_to_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
+            "#,
+        )
+        .bind(message_id)
+        .bind(&self.tenant_id)
+        .fetch_optional(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        Ok(row.and_then(|(count, last_at, last_sender)| {
+            if count > 0 {
+                Some(ThreadInfo {
+                    reply_count: count as i32,
+                    last_reply_at: last_at.map(|t| t.timestamp_millis()),
+                    last_reply_sender_id: last_sender,
+                })
+            } else {
+                None
+            }
+        }))
+    }
+
+    /// Get replies to a specific message with pagination
+    pub async fn get_thread_replies(
+        &self,
+        message_id: Uuid,
+        before: Option<DateTime<Utc>>,
+        limit: u32,
+    ) -> Result<(Vec<ChatMessage>, bool), StorageError> {
+        let limit = limit.min(100) as i64;
+
+        let messages = if let Some(before_time) = before {
+            sqlx::query_as::<_, MessageRow>(
+                r#"
+                SELECT
+                    id, conversation_id, sender_id, content, content_type,
+                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                FROM messages
+                WHERE reply_to_id = $1
+                    AND tenant_id = $2
+                    AND created_at < $3
+                ORDER BY created_at ASC
+                LIMIT $4
+                "#,
+            )
+            .bind(message_id)
+            .bind(&self.tenant_id)
+            .bind(before_time)
+            .bind(limit + 1)
+            .fetch_all(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?
+        } else {
+            sqlx::query_as::<_, MessageRow>(
+                r#"
+                SELECT
+                    id, conversation_id, sender_id, content, content_type,
+                    created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id
+                FROM messages
+                WHERE reply_to_id = $1 AND tenant_id = $2
+                ORDER BY created_at ASC
+                LIMIT $3
+                "#,
+            )
+            .bind(message_id)
+            .bind(&self.tenant_id)
+            .bind(limit + 1)
+            .fetch_all(self.pool.as_ref())
+            .await
+            .map_err(|e| StorageError::Database(e.to_string()))?
+        };
+
+        let has_more = messages.len() > limit as usize;
+        let messages: Vec<ChatMessage> = messages
+            .into_iter()
+            .take(limit as usize)
+            .map(|r| r.into_chat_message())
+            .collect();
+
+        Ok((messages, has_more))
+    }
+
+    /// Batch get thread info for multiple messages
+    pub async fn get_thread_info_batch(
+        &self,
+        message_ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, ThreadInfo>, StorageError> {
+        if message_ids.is_empty() {
+            return Ok(std::collections::HashMap::new());
+        }
+
+        let rows: Vec<(Uuid, i64, Option<DateTime<Utc>>, Option<Uuid>)> = sqlx::query_as(
+            r#"
+            SELECT
+                reply_to_id,
+                COUNT(*) as reply_count,
+                MAX(created_at) as last_reply_at,
+                (SELECT sender_id FROM messages m2
+                 WHERE m2.reply_to_id = messages.reply_to_id
+                   AND m2.tenant_id = $2
+                   AND m2.deleted_at IS NULL
+                 ORDER BY m2.created_at DESC LIMIT 1) as last_reply_sender_id
+            FROM messages
+            WHERE reply_to_id = ANY($1) AND tenant_id = $2 AND deleted_at IS NULL
+            GROUP BY reply_to_id
+            "#,
+        )
+        .bind(message_ids)
+        .bind(&self.tenant_id)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| StorageError::Database(e.to_string()))?;
+
+        let result = rows
+            .into_iter()
+            .map(|(msg_id, count, last_at, last_sender)| {
+                (
+                    msg_id,
+                    ThreadInfo {
+                        reply_count: count as i32,
+                        last_reply_at: last_at.map(|t| t.timestamp_millis()),
+                        last_reply_sender_id: last_sender,
+                    },
+                )
+            })
+            .collect();
+
+        Ok(result)
+    }
 }
 
 /// Search result row from database
@@ -530,6 +752,9 @@ pub enum StorageError {
 
     #[error("Serialization error: {0}")]
     Serialization(String),
+
+    #[error("Invalid reply target: message not found or deleted")]
+    InvalidReplyTarget,
 }
 
 #[cfg(test)]
@@ -558,6 +783,15 @@ mod tests {
     fn test_storage_error_serialization_display() {
         let err = StorageError::Serialization("invalid format".to_string());
         assert_eq!(err.to_string(), "Serialization error: invalid format");
+    }
+
+    #[test]
+    fn test_storage_error_invalid_reply_target_display() {
+        let err = StorageError::InvalidReplyTarget;
+        assert_eq!(
+            err.to_string(),
+            "Invalid reply target: message not found or deleted"
+        );
     }
 
     #[test]

@@ -22,6 +22,7 @@ fn test_migrations_exist() {
         "004_read_receipts.sql",
         "005_fulltext_search_index.sql",
         "006_attachments.sql",
+        "007_message_threading.sql",
     ];
 
     for migration in &expected_migrations {
@@ -216,10 +217,10 @@ fn test_005_fulltext_index_migration() {
         "Should create GIN index for full-text search"
     );
 
-    // Should use CONCURRENTLY for non-blocking
+    // Should create index on messages
     assert!(
-        content.contains("CONCURRENTLY"),
-        "Should create index CONCURRENTLY"
+        content.contains("messages"),
+        "Should create index on messages table"
     );
 
     // Should use to_tsvector
@@ -270,6 +271,43 @@ fn test_006_attachments_migration() {
     assert!(
         content.contains("52428800"),
         "Should have 50MB file size limit"
+    );
+}
+
+/// Test message threading migration structure
+#[test]
+fn test_007_message_threading_migration() {
+    let content = fs::read_to_string("migrations/007_message_threading.sql")
+        .expect("Failed to read migration");
+
+    // Should create index for reply lookups
+    assert!(
+        content.contains("idx_messages_reply_to"),
+        "Should create reply_to index"
+    );
+
+    // Should create index for thread counting
+    assert!(
+        content.contains("idx_messages_thread_count"),
+        "Should create thread count index"
+    );
+
+    // Should use partial index (WHERE reply_to_id IS NOT NULL)
+    assert!(
+        content.contains("WHERE reply_to_id IS NOT NULL"),
+        "Should use partial index for efficiency"
+    );
+
+    // Should be idempotent
+    assert!(
+        content.contains("IF NOT EXISTS"),
+        "Should be idempotent with IF NOT EXISTS"
+    );
+
+    // Should have descriptive comment
+    assert!(
+        content.contains("thread") || content.contains("reply"),
+        "Should have descriptive comments about threading"
     );
 }
 

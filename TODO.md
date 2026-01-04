@@ -46,7 +46,7 @@ Project status and planned features for Ara Chat Service.
 - [x] Structured logging / 結構化日誌
 
 ### Testing / 測試 *(v1.0.5)*
-- [x] Unit tests: 211 tests passing / 單元測試：211 項通過
+- [x] Unit tests: 238 tests passing / 單元測試：238 項通過
   - validation (sanitizer, limits, error): 33 tests
   - mention/parser: 14 tests
   - message (types, handler, router, storage, offline_queue): 89 tests
@@ -63,7 +63,7 @@ Project status and planned features for Ara Chat Service.
   - authentication/authorization: 12 tests
   - request ID middleware: 2 tests
   - WebSocket protocol: 4 tests
-- [x] Database migration tests: 10 tests passing / 資料庫遷移測試：10 項通過
+- [x] Database migration tests: 11 tests passing / 資料庫遷移測試：11 項通過
 
 ### Documentation / 文檔
 - [x] README.md
@@ -81,6 +81,14 @@ Project status and planned features for Ara Chat Service.
 - [x] Content hash deduplication / 內容雜湊去重
 - [x] MIME type validation / MIME 類型驗證
 - [x] 50MB file size limit / 50MB 檔案限制
+
+### Message Threading / 訊息串 *(v1.2.0)*
+- [x] Reply to specific messages / 回覆特定訊息
+- [x] Reply context preview (100 chars) / 回覆內容預覽
+- [x] Thread queries with pagination / 串列查詢分頁
+- [x] Reply count tracking / 回覆計數追蹤
+- [x] ThreadUpdated WebSocket events / 即時串更新事件
+- [x] Reply target validation / 回覆目標驗證
 
 ---
 
@@ -108,7 +116,7 @@ Project status and planned features for Ara Chat Service.
 - [x] File storage integration (S3/MinIO) / 檔案儲存整合
 
 #### Advanced Features / 進階功能
-- [ ] Message threading (replies) / 訊息串（回覆）
+- [x] Message threading (replies) / 訊息串（回覆） *(v1.2.0)*
 - [ ] Message pinning / 訊息置頂
 - [ ] Conversation muting / 對話靜音
 - [ ] User blocking / 用戶封鎖
@@ -175,8 +183,8 @@ Project status and planned features for Ara Chat Service.
 - ~~Database migration tests~~ *(Completed: 10 tests)*
 - ~~File upload support~~ *(Completed: Local + S3/MinIO, thumbnails)*
 
-### v1.2.0 (Planned)
-- Message threading
+### v1.2.0 (In Progress)
+- ~~Message threading~~ *(Completed: thread queries, reply context, ThreadUpdated events)*
 - Notification service integration
 - GDPR compliance
 

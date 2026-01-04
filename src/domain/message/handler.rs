@@ -6,7 +6,7 @@ use std::time::Duration;
 use chrono::Utc;
 use uuid::Uuid;
 
-use super::types::{ChatMessage, ContentType};
+use super::types::{ChatMessage, ContentType, ServerMessage};
 use super::storage::MessageStorage;
 use super::router::MessageRouter;
 use crate::conversation::ConversationService;
@@ -100,8 +100,22 @@ impl MessageHandler {
             .await?;
         let valid_mentions = MentionParser::validate_mentions(&all_mentions, &participants);
 
+        // Validate reply target if specified
+        let reply_context = if let Some(reply_to_id) = reply_to {
+            // Check if the reply target is valid (exists, same conversation, not deleted)
+            let is_valid = self.storage.validate_reply_target(reply_to_id, conversation_id).await?;
+            if !is_valid {
+                return Err(MessageHandlerError::InvalidReplyTarget);
+            }
+
+            // Get the reply context (preview of original message)
+            self.storage.get_reply_context(reply_to_id).await?
+        } else {
+            None
+        };
+
         // Create and store message
-        let message = self.storage.create_message(
+        let mut message = self.storage.create_message(
             conversation_id,
             sender_id,
             content,
@@ -111,8 +125,25 @@ impl MessageHandler {
             valid_mentions.clone(),
         ).await?;
 
+        // Attach reply context to the message
+        message.reply_context = reply_context;
+
         // Route message to all participants
         self.router.route_message(&message).await?;
+
+        // If this is a reply, notify about thread update
+        if let Some(reply_to_id) = reply_to {
+            if let Ok(Some(thread_info)) = self.storage.get_thread_info(reply_to_id).await {
+                // Route thread updated notification
+                self.router.route_thread_updated(
+                    conversation_id,
+                    reply_to_id,
+                    thread_info.reply_count,
+                    message.created_at,
+                    sender_id,
+                ).await?;
+            }
+        }
 
         // Handle mentions (skip sender)
         let mentions_to_notify: Vec<Uuid> = valid_mentions
@@ -281,6 +312,9 @@ pub enum MessageHandlerError {
     #[error("Edit window expired (allowed: {allowed_seconds} seconds)")]
     EditWindowExpired { allowed_seconds: u64 },
 
+    #[error("Invalid reply target: message not found, deleted, or in different conversation")]
+    InvalidReplyTarget,
+
     #[error("Storage error: {0}")]
     Storage(#[from] super::storage::StorageError),
 
@@ -331,6 +365,15 @@ mod tests {
     fn test_error_edit_window_expired_display() {
         let err = MessageHandlerError::EditWindowExpired { allowed_seconds: 900 };
         assert_eq!(err.to_string(), "Edit window expired (allowed: 900 seconds)");
+    }
+
+    #[test]
+    fn test_error_invalid_reply_target_display() {
+        let err = MessageHandlerError::InvalidReplyTarget;
+        assert_eq!(
+            err.to_string(),
+            "Invalid reply target: message not found, deleted, or in different conversation"
+        );
     }
 
     #[test]

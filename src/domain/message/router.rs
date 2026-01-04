@@ -202,6 +202,44 @@ impl MessageRouter {
 
         Ok(())
     }
+
+    /// Route thread updated notification to conversation participants
+    /// Called when a new reply is added to a message thread
+    pub async fn route_thread_updated(
+        &self,
+        conversation_id: Uuid,
+        message_id: Uuid,
+        reply_count: i32,
+        last_reply_at: i64,
+        last_reply_sender_id: Uuid,
+    ) -> Result<(), RouterError> {
+        let participants = self.conversation_service
+            .get_participant_ids(conversation_id)
+            .await
+            .map_err(|e| RouterError::ConversationError(e.to_string()))?;
+
+        let server_message = ServerMessage::ThreadUpdated {
+            conversation_id,
+            message_id,
+            reply_count,
+            last_reply_at,
+            last_reply_sender_id,
+        };
+        let outbound = OutboundMessage::preserialized(&server_message)
+            .map_err(|e| RouterError::Serialization(e.to_string()))?;
+
+        for participant_id in participants {
+            if self.connection_manager.has_user(&participant_id) {
+                self.connection_manager.send_to_user(&participant_id, outbound.clone()).await;
+            } else if let Some(ref cluster_router) = self.cluster_router {
+                // Thread updates are transient, no need to queue for offline users
+                cluster_router.route_to_user(participant_id, outbound.clone()).await
+                    .map_err(|e| RouterError::ClusterError(e.to_string()))?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Router errors
