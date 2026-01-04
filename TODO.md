@@ -149,6 +149,30 @@ Project status and planned features for Ara Chat Service.
   - `POST /api/v1/messages/{id}/forward`
 - [x] Database migration: `012_message_forwarding.sql`
 
+### Link Preview / 連結預覽 *(v1.6.0)*
+- [x] Extract URLs from message content / 從訊息內容提取 URL
+- [x] Fetch Open Graph metadata asynchronously / 異步獲取 Open Graph 元資料
+- [x] Cache previews in Redis (24-hour TTL) / Redis 快取預覽（24 小時 TTL）
+- [x] Store in PostgreSQL for persistence / PostgreSQL 持久化儲存
+- [x] Background processing (5-second interval) / 背景處理（5 秒間隔）
+- [x] Max 5 URLs per message / 每則訊息最多 5 個 URL
+- [x] WebSocket: LinkPreviewReady / WebSocket 訊息
+- [x] REST API endpoints / REST API 端點
+  - `GET /api/v1/messages/{id}/previews`
+  - `POST /api/v1/messages/{id}/previews/refresh`
+- [x] Database migration: `013_link_previews.sql`
+
+### Markdown Rendering Hints / Markdown 渲染提示 *(v1.7.0)*
+- [x] Parse markdown content on message send / 訊息發送時解析 Markdown
+- [x] Extract position-based formatting hints / 提取位置型格式提示
+- [x] Support bold, italic, code, links, headings / 支援粗體、斜體、程式碼、連結、標題
+- [x] Support code blocks with language hints / 支援程式碼區塊與語言提示
+- [x] Support strikethrough, blockquotes, lists / 支援刪除線、引用、清單
+- [x] Store hints inline with message (JSONB) / 訊息內儲存提示（JSONB）
+- [x] Skip parsing for non-text content / 非文字內容跳過解析
+- [x] Fast pre-filter for plain text / 純文字快速預過濾
+- [x] Database migration: `014_rendering_hints.sql`
+
 ---
 
 ## Planned Features / 計劃中功能
@@ -199,8 +223,8 @@ Project status and planned features for Ara Chat Service.
 - [ ] Lazy loading for large groups / 大群組懶載入
 
 #### UI/UX Support / UI/UX 支援
-- [ ] Link preview generation / 連結預覽
-- [ ] Markdown rendering hints / Markdown 渲染提示
+- [x] Link preview generation / 連結預覽 *(v1.6.0)*
+- [x] Markdown rendering hints / Markdown 渲染提示 *(v1.7.0)*
 - [ ] Custom emoji support / 自訂表情支援
 
 ---
@@ -256,6 +280,12 @@ Project status and planned features for Ara Chat Service.
 ### v1.5.0 (Completed)
 - ~~Message forwarding~~ *(Completed: forward to multiple conversations, batch forwarding, metadata preservation, block check)*
 
+### v1.6.0 (Completed)
+- ~~Link preview~~ *(Completed: URL extraction, Open Graph metadata, Redis caching, background processing, real-time WebSocket updates)*
+
+### v1.7.0 (Completed)
+- ~~Markdown rendering hints~~ *(Completed: position-based spans, bold/italic/code/links/headings/code blocks/strikethrough/blockquotes/lists, JSONB storage, 318 tests passing)*
+
 ### v2.0.0 (Future)
 - End-to-end encryption
 - Voice messages
@@ -277,3 +307,5 @@ Last updated: 2026-01-04
 6. `010_conversation_muting.sql` - Conversation muting support
 7. `011_user_blocking.sql` - User blocking support
 8. `012_message_forwarding.sql` - Message forwarding support
+9. `013_link_previews.sql` - Link preview metadata storage
+10. `014_rendering_hints.sql` - Markdown rendering hints (JSONB column)

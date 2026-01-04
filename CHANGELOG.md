@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Markdown Rendering Hints**: Position-based formatting hints for client-side rendering
+  - Parse markdown content synchronously on message send
+  - Support for bold, italic, inline code, code blocks (with language)
+  - Support for links, strikethrough, headings (1-6), blockquotes, list items
+  - Fast pre-filter (`might_contain_markdown`) for plain text
+  - Store hints inline with message as JSONB
+  - Skip parsing for non-text content (images, files)
+  - 23 unit tests for markdown module
+  - Database migration: `014_rendering_hints.sql`
+- **Link Preview**: Extract and display Open Graph metadata from URLs
+  - Extract URLs from message content (max 5 per message)
+  - Fetch Open Graph metadata asynchronously in background
+  - Cache previews in Redis (24-hour TTL)
+  - Store in PostgreSQL for persistence
+  - Background worker processes pending previews every 5 seconds
+  - Real-time WebSocket notification (LinkPreviewReady)
+  - REST API endpoints:
+    - `GET /api/v1/messages/{id}/previews` - Get link previews for a message
+    - `POST /api/v1/messages/{id}/previews/refresh` - Re-fetch failed previews
+  - Database migration: `013_link_previews.sql`
 - **Message Forwarding**: Forward messages to one or more conversations
   - Forward messages (up to 10 conversations per request)
   - Preserve original message metadata (sender, conversation, content)
@@ -164,3 +184,5 @@ Current migrations:
 6. `010_conversation_muting.sql` - Conversation muting support
 7. `011_user_blocking.sql` - User blocking support
 8. `012_message_forwarding.sql` - Message forwarding support
+9. `013_link_previews.sql` - Link preview metadata storage
+10. `014_rendering_hints.sql` - Markdown rendering hints (JSONB column)

@@ -7,6 +7,7 @@
 //! - Stale connection cleanup
 //! - Partition management (permanent storage)
 //! - Cluster message subscriber
+//! - Link preview processing
 
 use std::time::{Duration, Instant};
 
@@ -40,9 +41,10 @@ impl BackgroundTasks {
         let stale_conn_state = state.clone();
         let partition_state = state.clone();
         let cluster_state = state.clone();
+        let link_preview_state = state.clone();
 
         // Track active tasks
-        let task_count = if state.settings.cluster.enabled { 6 } else { 5 };
+        let task_count = if state.settings.cluster.enabled { 7 } else { 6 };
         metrics::ACTIVE_TASKS.set(task_count);
 
         let heartbeat = run_heartbeat(heartbeat_state);
@@ -51,6 +53,7 @@ impl BackgroundTasks {
         let stale_cleanup = run_stale_connection_cleanup(stale_conn_state);
         let partition_mgmt = run_partition_management(partition_state);
         let cluster_sub = run_cluster_subscriber(cluster_state);
+        let link_preview = run_link_preview_processor(link_preview_state);
 
         tokio::select! {
             _ = heartbeat => {
@@ -70,6 +73,9 @@ impl BackgroundTasks {
             },
             _ = cluster_sub => {
                 tracing::warn!("Cluster subscriber task exited unexpectedly");
+            },
+            _ = link_preview => {
+                tracing::warn!("Link preview processor task exited unexpectedly");
             },
             _ = shutdown_rx.recv() => {
                 tracing::info!("Background tasks received shutdown signal");
@@ -349,6 +355,105 @@ async fn run_cluster_subscriber(state: AppState) {
         tracing::warn!("Cluster subscription stream ended, reconnecting...");
         metrics::CLUSTER_SUBSCRIBED.set(0);
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+/// Link preview processor task - fetches Open Graph metadata for URLs in messages
+async fn run_link_preview_processor(state: AppState) {
+    let Some(ref service) = state.link_preview_service else {
+        tracing::info!("Link preview service not available, processor not started");
+        std::future::pending::<()>().await;
+        return;
+    };
+
+    // Process pending previews every 5 seconds
+    let mut ticker = tokio::time::interval(Duration::from_secs(5));
+
+    tracing::info!("Link preview processor started");
+
+    loop {
+        ticker.tick().await;
+
+        // Get pending previews
+        let pending = match service.get_pending_previews().await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to get pending previews");
+                continue;
+            }
+        };
+
+        if pending.is_empty() {
+            continue;
+        }
+
+        // Group pending previews by message_id for batch broadcasting
+        let mut previews_by_message: std::collections::HashMap<uuid::Uuid, Vec<crate::link_preview::LinkPreview>> =
+            std::collections::HashMap::new();
+
+        for pending_preview in pending {
+            match service.process_preview(&pending_preview).await {
+                Ok(preview) => {
+                    // Only broadcast successful previews
+                    if preview.status == crate::link_preview::PreviewStatus::Success {
+                        previews_by_message
+                            .entry(pending_preview.message_id)
+                            .or_default()
+                            .push(preview);
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        preview_id = %pending_preview.id,
+                        error = %e,
+                        "Failed to process preview"
+                    );
+                }
+            }
+        }
+
+        // Broadcast to conversation participants
+        for (message_id, previews) in previews_by_message {
+            if previews.is_empty() {
+                continue;
+            }
+
+            // Get conversation_id for this message
+            let conversation_id = match service.get_conversation_id(message_id).await {
+                Ok(Some(id)) => id,
+                Ok(None) => {
+                    tracing::warn!(message_id = %message_id, "Message not found for preview broadcast");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(message_id = %message_id, error = %e, "Failed to get conversation for preview");
+                    continue;
+                }
+            };
+
+            // Broadcast to conversation participants
+            if let Some(ref conv_service) = state.conversation_service {
+                if let Ok(participants) = conv_service.get_participant_ids(conversation_id).await {
+                    let server_message = crate::message::ServerMessage::LinkPreviewReady {
+                        message_id,
+                        conversation_id,
+                        previews: previews.clone(),
+                    };
+                    let outbound: crate::message::OutboundMessage = server_message.into();
+
+                    for user_id in participants {
+                        state.connection_manager.send_to_user(&user_id, outbound.clone()).await;
+                    }
+
+                    tracing::debug!(
+                        message_id = %message_id,
+                        conversation_id = %conversation_id,
+                        preview_count = previews.len(),
+                        "Broadcast link previews"
+                    );
+                }
+            }
+        }
     }
 }
 

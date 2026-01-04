@@ -10,6 +10,7 @@ use super::types::{ChatMessage, ContentType, ForwardedFrom, ForwardResult, Outbo
 use super::storage::MessageStorage;
 use super::router::MessageRouter;
 use crate::conversation::ConversationService;
+use crate::markdown::{might_contain_markdown, parse_markdown};
 use crate::mention::MentionParser;
 
 /// Handles incoming chat messages
@@ -114,6 +115,18 @@ impl MessageHandler {
             None
         };
 
+        // Parse markdown rendering hints for text content
+        let rendering_hints = if content_type == ContentType::Text && might_contain_markdown(&content) {
+            let hints = parse_markdown(&content);
+            if hints.has_formatting {
+                Some(hints)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Create and store message
         let mut message = self.storage.create_message(
             conversation_id,
@@ -123,6 +136,7 @@ impl MessageHandler {
             reply_to,
             client_message_id,
             valid_mentions.clone(),
+            rendering_hints,
         ).await?;
 
         // Attach reply context to the message
@@ -219,8 +233,20 @@ impl MessageHandler {
             .await?;
         let valid_mentions = MentionParser::validate_mentions(&new_mentions, &participants);
 
+        // Parse markdown rendering hints for the new content
+        let new_rendering_hints = if message.content_type == ContentType::Text && might_contain_markdown(&new_content) {
+            let hints = parse_markdown(&new_content);
+            if hints.has_formatting {
+                Some(hints)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Update the message
-        let updated = self.storage.edit_message(message_id, new_content, valid_mentions.clone()).await?;
+        let updated = self.storage.edit_message(message_id, new_content, valid_mentions.clone(), new_rendering_hints).await?;
 
         // Route edit notification to all participants
         self.router.route_message_edit(&updated).await?;
@@ -583,13 +609,14 @@ impl MessageHandler {
             };
         }
 
-        // Create the forwarded message
+        // Create the forwarded message (preserve rendering hints from source)
         match self.storage.create_forwarded_message(
             target_conversation_id,
             user_id,
             source_message.content.clone(),
             source_message.content_type,
             forwarded_from.clone(),
+            source_message.rendering_hints.clone(),
         ).await {
             Ok(forwarded_message) => {
                 // Route the message to participants

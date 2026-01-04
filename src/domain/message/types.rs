@@ -6,6 +6,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::markdown::RenderingHints;
+
 /// Messages sent from client to server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "payload")]
@@ -337,6 +339,14 @@ pub enum ServerMessage {
         results: Vec<ForwardResult>,
     },
 
+    /// Link previews are ready for a message
+    #[serde(rename = "link_preview_ready")]
+    LinkPreviewReady {
+        message_id: Uuid,
+        conversation_id: Uuid,
+        previews: Vec<crate::link_preview::LinkPreview>,
+    },
+
     /// Error response
     #[serde(rename = "error")]
     Error { code: String, message: String },
@@ -452,6 +462,9 @@ pub struct ChatMessage {
     /// Forwarding metadata - present if this message was forwarded
     #[serde(skip_serializing_if = "Option::is_none")]
     pub forwarded_from: Option<ForwardedFrom>,
+    /// Markdown rendering hints for client-side formatting
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rendering_hints: Option<RenderingHints>,
 }
 
 /// Conversation summary for list view
@@ -905,6 +918,7 @@ mod tests {
             pinned_at: None,
             pinned_by: None,
             forwarded_from: None,
+            rendering_hints: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();
@@ -919,6 +933,7 @@ mod tests {
         assert!(!json.contains("pinned_at"));
         assert!(!json.contains("pinned_by"));
         assert!(!json.contains("forwarded_from"));
+        assert!(!json.contains("rendering_hints"));
     }
 
     #[test]
@@ -944,6 +959,7 @@ mod tests {
             pinned_at: None,
             pinned_by: None,
             forwarded_from: None,
+            rendering_hints: None,
         };
 
         let json = serde_json::to_string(&msg).unwrap();

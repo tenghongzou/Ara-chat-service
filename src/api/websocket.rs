@@ -446,6 +446,17 @@ async fn handle_send_message(
                     }
                 }
             }
+
+            // Enqueue link previews for background processing
+            if let Some(ref link_preview_service) = state.link_preview_service {
+                if let Err(e) = link_preview_service.enqueue_previews(message.id, &message.content).await {
+                    tracing::warn!(
+                        message_id = %message.id,
+                        error = %e,
+                        "Failed to enqueue link previews"
+                    );
+                }
+            }
         }
         Err(e) => {
             tracing::error!(user_id = %user_id, error = %e, "Failed to send message");

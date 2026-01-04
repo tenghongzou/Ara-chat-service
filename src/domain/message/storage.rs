@@ -7,6 +7,7 @@ use sqlx::{FromRow, PgPool, Row};
 use uuid::Uuid;
 
 use super::types::{ChatMessage, ContentType, ForwardedFrom, ReplyContext, ThreadInfo};
+use crate::markdown::RenderingHints;
 
 /// Message row from database
 #[derive(Debug, FromRow)]
@@ -26,6 +27,8 @@ struct MessageRow {
     forwarded_from_message_id: Option<Uuid>,
     forwarded_from_sender_id: Option<Uuid>,
     forwarded_from_conversation_id: Option<Uuid>,
+    // Markdown rendering hints (JSONB)
+    rendering_hints: Option<sqlx::types::Json<RenderingHints>>,
 }
 
 impl MessageRow {
@@ -66,6 +69,7 @@ impl MessageRow {
             pinned_at: None,      // Loaded separately when needed
             pinned_by: None,      // Loaded separately when needed
             forwarded_from,
+            rendering_hints: self.rendering_hints.map(|j| j.0),
         }
     }
 }
@@ -105,6 +109,7 @@ impl MessageStorage {
         reply_to: Option<Uuid>,
         client_message_id: Option<String>,
         mentions: Vec<Uuid>,
+        rendering_hints: Option<RenderingHints>,
     ) -> Result<ChatMessage, StorageError> {
         let id = Uuid::new_v4();
         let content_type_str = match content_type {
@@ -114,17 +119,21 @@ impl MessageStorage {
             ContentType::System => "system",
         };
 
+        // Convert rendering_hints to JSON for storage
+        let hints_json = rendering_hints.map(sqlx::types::Json);
+
         let row = sqlx::query_as::<_, MessageRow>(
             r#"
             INSERT INTO messages (
                 id, conversation_id, sender_id, tenant_id,
-                content, content_type, reply_to_id, mentions, client_message_id
+                content, content_type, reply_to_id, mentions, client_message_id, rendering_hints
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING
                 id, conversation_id, sender_id, content, content_type,
                 created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             "#,
         )
         .bind(id)
@@ -136,6 +145,7 @@ impl MessageStorage {
         .bind(reply_to)
         .bind(&mentions)
         .bind(&client_message_id)
+        .bind(&hints_json)
         .fetch_one(self.pool.as_ref())
         .await
         .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -164,7 +174,8 @@ impl MessageStorage {
             SELECT
                 id, conversation_id, sender_id, content, content_type,
                 created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             FROM messages
             WHERE id = $1 AND tenant_id = $2
             "#,
@@ -226,7 +237,8 @@ impl MessageStorage {
                 SELECT
                     id, conversation_id, sender_id, content, content_type,
                     created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                    rendering_hints
                 FROM messages
                 WHERE conversation_id = $1
                     AND tenant_id = $2
@@ -248,7 +260,8 @@ impl MessageStorage {
                 SELECT
                     id, conversation_id, sender_id, content, content_type,
                     created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                    rendering_hints
                 FROM messages
                 WHERE conversation_id = $1 AND tenant_id = $2
                 ORDER BY created_at DESC
@@ -284,7 +297,8 @@ impl MessageStorage {
             SELECT
                 id, conversation_id, sender_id, content, content_type,
                 created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             FROM messages
             WHERE id = ANY($1) AND tenant_id = $2
             "#,
@@ -309,7 +323,8 @@ impl MessageStorage {
             SELECT
                 id, conversation_id, sender_id, content, content_type,
                 created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             FROM messages
             WHERE sender_id = $1 AND client_message_id = $2 AND tenant_id = $3
             ORDER BY created_at DESC
@@ -332,23 +347,27 @@ impl MessageStorage {
         message_id: Uuid,
         new_content: String,
         new_mentions: Vec<Uuid>,
+        new_rendering_hints: Option<RenderingHints>,
     ) -> Result<ChatMessage, StorageError> {
         let now = Utc::now();
+        let hints_json = new_rendering_hints.map(sqlx::types::Json);
 
         let row = sqlx::query_as::<_, MessageRow>(
             r#"
             UPDATE messages
-            SET content = $1, mentions = $2, updated_at = $3
-            WHERE id = $4 AND tenant_id = $5 AND deleted_at IS NULL
+            SET content = $1, mentions = $2, updated_at = $3, rendering_hints = $4
+            WHERE id = $5 AND tenant_id = $6 AND deleted_at IS NULL
             RETURNING
                 id, conversation_id, sender_id, content, content_type,
                 created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             "#,
         )
         .bind(&new_content)
         .bind(&new_mentions)
         .bind(now)
+        .bind(&hints_json)
         .bind(message_id)
         .bind(&self.tenant_id)
         .fetch_optional(self.pool.as_ref())
@@ -657,7 +676,8 @@ impl MessageStorage {
                 SELECT
                     id, conversation_id, sender_id, content, content_type,
                     created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                    rendering_hints
                 FROM messages
                 WHERE reply_to_id = $1
                     AND tenant_id = $2
@@ -679,7 +699,8 @@ impl MessageStorage {
                 SELECT
                     id, conversation_id, sender_id, content, content_type,
                     created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                    forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                    rendering_hints
                 FROM messages
                 WHERE reply_to_id = $1 AND tenant_id = $2
                 ORDER BY created_at ASC
@@ -915,7 +936,8 @@ impl MessageStorage {
             SELECT
                 id, conversation_id, sender_id, content, content_type,
                 created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             FROM messages
             WHERE id = ANY($1) AND tenant_id = $2
             "#,
@@ -973,6 +995,7 @@ impl MessageStorage {
         content: String,
         content_type: ContentType,
         forwarded_from: ForwardedFrom,
+        rendering_hints: Option<RenderingHints>,
     ) -> Result<ChatMessage, StorageError> {
         let id = Uuid::new_v4();
         let content_type_str = match content_type {
@@ -982,18 +1005,22 @@ impl MessageStorage {
             ContentType::System => "system",
         };
 
+        let hints_json = rendering_hints.map(sqlx::types::Json);
+
         let row = sqlx::query_as::<_, MessageRow>(
             r#"
             INSERT INTO messages (
                 id, conversation_id, sender_id, tenant_id,
                 content, content_type, mentions,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING
                 id, conversation_id, sender_id, content, content_type,
                 created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             "#,
         )
         .bind(id)
@@ -1006,6 +1033,7 @@ impl MessageStorage {
         .bind(forwarded_from.message_id)
         .bind(forwarded_from.sender_id)
         .bind(forwarded_from.conversation_id)
+        .bind(&hints_json)
         .fetch_one(self.pool.as_ref())
         .await
         .map_err(|e| StorageError::Database(e.to_string()))?;
@@ -1038,7 +1066,8 @@ impl MessageStorage {
             SELECT
                 id, conversation_id, sender_id, content, content_type,
                 created_at, updated_at, deleted_at, reply_to_id, mentions, client_message_id,
-                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id
+                forwarded_from_message_id, forwarded_from_sender_id, forwarded_from_conversation_id,
+                rendering_hints
             FROM messages
             WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
             "#,

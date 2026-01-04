@@ -1428,3 +1428,223 @@ pub async fn forward_message(
         }
     }
 }
+
+// ==================== Link Preview Endpoints ====================
+
+/// Response for link previews
+#[derive(Serialize)]
+pub struct LinkPreviewsResponse {
+    pub message_id: Uuid,
+    pub previews: Vec<crate::link_preview::LinkPreview>,
+}
+
+/// Response for refresh link previews
+#[derive(Serialize)]
+pub struct RefreshPreviewsResponse {
+    pub refreshed_count: usize,
+}
+
+/// Get link previews for a message
+/// GET /api/v1/messages/{id}/previews
+pub async fn get_link_previews(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<LinkPreviewsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    // Get the message to verify access
+    let storage = state.message_storage.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    let message = storage.get_message(message_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                code: "FETCH_FAILED".to_string(),
+                message: e.to_string(),
+            }),
+        )
+    })?;
+
+    let message = message.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                code: "MESSAGE_NOT_FOUND".to_string(),
+                message: "Message not found".to_string(),
+            }),
+        )
+    })?;
+
+    // Verify user is a participant in the conversation
+    let conv_service = state.conversation_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Conversation service not available".to_string(),
+            }),
+        )
+    })?;
+
+    let is_participant = conv_service
+        .is_participant(message.conversation_id, user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "CHECK_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            )
+        })?;
+
+    if !is_participant {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                code: "NOT_PARTICIPANT".to_string(),
+                message: "You are not a participant in this conversation".to_string(),
+            }),
+        ));
+    }
+
+    // Get link previews
+    let link_preview_service = state.link_preview_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Link preview service not available".to_string(),
+            }),
+        )
+    })?;
+
+    let previews = link_preview_service
+        .get_previews_for_message(message_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "FETCH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            )
+        })?;
+
+    Ok(Json(LinkPreviewsResponse {
+        message_id,
+        previews,
+    }))
+}
+
+/// Refresh failed link previews for a message
+/// POST /api/v1/messages/{id}/previews/refresh
+pub async fn refresh_link_previews(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(message_id): Path<Uuid>,
+) -> Result<Json<RefreshPreviewsResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let user_id = extract_user_id(&headers, &state)?;
+
+    // Get the message to verify access
+    let storage = state.message_storage.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Message service not available".to_string(),
+            }),
+        )
+    })?;
+
+    let message = storage.get_message(message_id).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                code: "FETCH_FAILED".to_string(),
+                message: e.to_string(),
+            }),
+        )
+    })?;
+
+    let message = message.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                code: "MESSAGE_NOT_FOUND".to_string(),
+                message: "Message not found".to_string(),
+            }),
+        )
+    })?;
+
+    // Verify user is a participant in the conversation
+    let conv_service = state.conversation_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Conversation service not available".to_string(),
+            }),
+        )
+    })?;
+
+    let is_participant = conv_service
+        .is_participant(message.conversation_id, user_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "CHECK_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            )
+        })?;
+
+    if !is_participant {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                code: "NOT_PARTICIPANT".to_string(),
+                message: "You are not a participant in this conversation".to_string(),
+            }),
+        ));
+    }
+
+    // Refresh failed link previews
+    let link_preview_service = state.link_preview_service.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ErrorResponse {
+                code: "SERVICE_UNAVAILABLE".to_string(),
+                message: "Link preview service not available".to_string(),
+            }),
+        )
+    })?;
+
+    let refreshed_count = link_preview_service
+        .refresh_failed_previews(message_id)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    code: "REFRESH_FAILED".to_string(),
+                    message: e.to_string(),
+                }),
+            )
+        })?;
+
+    Ok(Json(RefreshPreviewsResponse { refreshed_count }))
+}

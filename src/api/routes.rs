@@ -66,6 +66,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/blocked-users", get(rest::get_blocked_users))
         // REST API - Message Forwarding
         .route("/api/v1/messages/{id}/forward", post(rest::forward_message))
+        // REST API - Link Previews
+        .route("/api/v1/messages/{id}/previews", get(rest::get_link_previews))
+        .route("/api/v1/messages/{id}/previews/refresh", post(rest::refresh_link_previews))
         // REST API - GDPR Compliance
         .route("/api/v1/gdpr/export", post(gdpr::request_export))
         .route("/api/v1/gdpr/export/{id}", get(gdpr::get_export_status))

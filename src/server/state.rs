@@ -14,6 +14,7 @@ use crate::config::Settings;
 use crate::connection::{ConnectionLimits, ConnectionManager};
 use crate::conversation::ConversationService;
 use crate::gdpr::{GdprService, GdprServiceConfig};
+use crate::link_preview::LinkPreviewService;
 use crate::message::{MessageHandler, MessageRouter, MessageStorage, OfflineQueue};
 use crate::notification::{NotificationPublisher, NotificationPublisherConfig};
 use crate::postgres::PostgresPool;
@@ -48,6 +49,7 @@ pub struct AppState {
     pub notification_publisher: Option<Arc<NotificationPublisher>>,
     pub gdpr_service: Option<Arc<GdprService>>,
     pub blocking_service: Option<Arc<BlockingService>>,
+    pub link_preview_service: Option<Arc<LinkPreviewService>>,
     pub start_time: Instant,
 }
 
@@ -88,6 +90,7 @@ impl AppState {
             notification_publisher: None,
             gdpr_service: None,
             blocking_service: None,
+            link_preview_service: None,
             start_time: Instant::now(),
         })
     }
@@ -325,6 +328,15 @@ impl AppState {
             None
         };
 
+        // Create link preview service (only if PostgreSQL is available)
+        let link_preview_service = if let Some(ref pg_pool) = postgres_pool {
+            let sqlx_pool: Arc<PgPool> = Arc::new(pg_pool.pool().clone());
+            tracing::info!("Link preview service initialized");
+            Some(Arc::new(LinkPreviewService::new(sqlx_pool, redis_pool.clone())))
+        } else {
+            None
+        };
+
         Ok(Self {
             settings: Arc::new(settings),
             jwt_validator,
@@ -348,6 +360,7 @@ impl AppState {
             notification_publisher,
             gdpr_service,
             blocking_service,
+            link_preview_service,
             start_time: Instant::now(),
         })
     }
