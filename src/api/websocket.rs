@@ -429,9 +429,21 @@ async fn handle_client_message(connection_id: Uuid, user_id: Uuid, msg: ClientMe
             handle_forward_message(user_id, message_id, source_conversation_id, target_conversation_ids, state).await;
         }
 
+        ClientMessage::FetchParticipants {
+            conversation_id,
+            offset,
+            limit,
+        } => {
+            handle_fetch_participants(user_id, conversation_id, offset, limit, state).await;
+        }
+
         ClientMessage::Authenticate { .. } => {
             // Already authenticated via query param
             tracing::debug!(user_id = %user_id, "Re-auth attempted on authenticated connection");
+        }
+
+        ClientMessage::Capabilities { .. } => {
+            // Handled in recv_task before calling handle_client_message
         }
     }
 }
@@ -1610,6 +1622,69 @@ async fn handle_forward_message(
         Err(e) => {
             tracing::warn!(user_id = %user_id, error = %e, "Failed to forward message");
             send_error(user_id, "FORWARD_FAILED", e.to_string(), state).await;
+        }
+    }
+}
+
+// ==================== Lazy Loading Handlers ====================
+
+/// Handle fetch participants request with pagination (lazy loading)
+async fn handle_fetch_participants(
+    user_id: Uuid,
+    conversation_id: Uuid,
+    offset: Option<u32>,
+    limit: Option<u32>,
+    state: &AppState,
+) {
+    let conv_service = match &state.conversation_service {
+        Some(s) => s,
+        None => {
+            send_error(user_id, "SERVICE_UNAVAILABLE", "Conversation service not available".to_string(), state).await;
+            return;
+        }
+    };
+
+    // Verify user is a participant
+    match conv_service.is_participant(conversation_id, user_id).await {
+        Ok(false) => {
+            send_error(user_id, "NOT_PARTICIPANT", "You are not a participant in this conversation".to_string(), state).await;
+            return;
+        }
+        Err(e) => {
+            send_error(user_id, "FETCH_FAILED", e.to_string(), state).await;
+            return;
+        }
+        _ => {}
+    }
+
+    // Apply defaults and limits from settings
+    let offset = offset.unwrap_or(0);
+    let limit = limit.unwrap_or(state.settings.participant.page_size as u32)
+        .min(state.settings.participant.max_page_size as u32);
+
+    match conv_service.get_participants_paginated(conversation_id, offset, limit).await {
+        Ok((participants, total_count, has_more)) => {
+            let response = ServerMessage::participants(
+                conversation_id,
+                participants,
+                total_count,
+                offset,
+                has_more,
+            );
+            state.connection_manager.send_to_user(&user_id, response.into()).await;
+
+            tracing::debug!(
+                user_id = %user_id,
+                conversation_id = %conversation_id,
+                offset = offset,
+                count = limit,
+                total = total_count,
+                "Fetched participants page"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(user_id = %user_id, error = %e, "Failed to fetch participants");
+            send_error(user_id, "FETCH_FAILED", e.to_string(), state).await;
         }
     }
 }

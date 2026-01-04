@@ -172,6 +172,17 @@ pub enum ClientMessage {
         conversation_ids: Vec<Uuid>,
     },
 
+    /// Fetch participants for a conversation with pagination (lazy loading)
+    FetchParticipants {
+        conversation_id: Uuid,
+        /// Offset for pagination (default: 0)
+        #[serde(default)]
+        offset: Option<u32>,
+        /// Number of participants to fetch (default: 50, max: 100)
+        #[serde(default)]
+        limit: Option<u32>,
+    },
+
     /// Ping for keepalive
     Ping,
 }
@@ -393,6 +404,16 @@ pub enum ServerMessage {
         total_subscriptions: usize,
     },
 
+    /// Participants response with pagination (lazy loading)
+    #[serde(rename = "participants")]
+    Participants {
+        conversation_id: Uuid,
+        participants: Vec<ParticipantInfo>,
+        total_count: u32,
+        offset: u32,
+        has_more: bool,
+    },
+
     /// Error response
     #[serde(rename = "error")]
     Error { code: String, message: String },
@@ -441,6 +462,22 @@ impl ServerMessage {
             subscribed,
             unsubscribed,
             total_subscriptions,
+        }
+    }
+
+    pub fn participants(
+        conversation_id: Uuid,
+        participants: Vec<ParticipantInfo>,
+        total_count: u32,
+        offset: u32,
+        has_more: bool,
+    ) -> Self {
+        Self::Participants {
+            conversation_id,
+            participants,
+            total_count,
+            offset,
+            has_more,
         }
     }
 }

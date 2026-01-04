@@ -240,6 +240,19 @@ Project status and planned features for Ara Chat Service.
 - [x] WebSocket: SubscribeConversations, UnsubscribeConversations, SubscriptionUpdated
 - [x] Configurable via `CHAT__SUBSCRIPTION__*` environment variables
 
+### Lazy Loading for Large Groups / 大群組懶載入 *(v1.12.0)*
+- [x] Participant preview in conversation list (5 participants) / 對話列表中的參與者預覽
+- [x] Optimized single-query loading (eliminates N+1) / 優化單一查詢載入
+- [x] Paginated participant fetching (50 per page, max 100) / 分頁參與者獲取
+- [x] On-demand full participant list loading / 按需載入完整參與者列表
+- [x] Participant ordering by role (owner > admin > member) / 按角色排序參與者
+- [x] Backward compatible (existing clients work with preview) / 向後兼容
+- [x] WebSocket: FetchParticipants, Participants
+- [x] Configurable via `CHAT__PARTICIPANT__*` environment variables
+  - `CHAT__PARTICIPANT__PREVIEW_COUNT` - Preview count (default: 5)
+  - `CHAT__PARTICIPANT__PAGE_SIZE` - Page size (default: 50)
+  - `CHAT__PARTICIPANT__MAX_PAGE_SIZE` - Max page size (default: 100)
+
 ---
 
 ## Planned Features / 計劃中功能
@@ -287,7 +300,7 @@ Project status and planned features for Ara Chat Service.
 #### Performance / 效能
 - [x] Message compression / 訊息壓縮 *(v1.10.0)*
 - [x] Connection multiplexing (conversation subscription) / 連線多工（對話訂閱） *(v1.11.0)*
-- [ ] Lazy loading for large groups / 大群組懶載入
+- [x] Lazy loading for large groups / 大群組懶載入 *(v1.12.0)*
 
 #### UI/UX Support / UI/UX 支援
 - [x] Link preview generation / 連結預覽 *(v1.6.0)*
@@ -364,6 +377,9 @@ Project status and planned features for Ara Chat Service.
 
 ### v1.11.0 (Completed)
 - ~~Connection multiplexing~~ *(Completed: per-connection conversation subscriptions, legacy/explicit modes, auto-subscribe on FetchHistory/SendMessage, system message bypass, subscription metrics)*
+
+### v1.12.0 (Completed)
+- ~~Lazy loading for large groups~~ *(Completed: participant preview in conversation list, optimized single-query loading, paginated participant fetching, on-demand full list, role-based ordering, backward compatible)*
 
 ### v2.0.0 (Future)
 - End-to-end encryption

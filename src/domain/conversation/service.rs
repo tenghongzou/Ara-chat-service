@@ -3,7 +3,9 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use sqlx::{FromRow, PgPool};
+use sqlx::types::Json;
 use uuid::Uuid;
 
 use crate::message::{ConversationType, ConversationSummary, LastMessagePreview, ParticipantInfo, ParticipantRole, ContentType};
@@ -46,6 +48,34 @@ impl ConversationRow {
             last_message_at: self.last_message_at,
         }
     }
+}
+
+/// Conversation row with participant preview (optimized for lazy loading)
+#[derive(Debug, FromRow)]
+struct ConversationWithPreviewRow {
+    id: Uuid,
+    tenant_id: String,
+    #[sqlx(rename = "type")]
+    conversation_type: String,
+    name: Option<String>,
+    avatar_url: Option<String>,
+    created_by: Uuid,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    participant_count: i32,
+    last_message_id: Option<Uuid>,
+    last_message_at: Option<DateTime<Utc>>,
+    /// JSON array of participant preview: [{user_id, role}, ...]
+    participant_preview: Option<Json<Vec<ParticipantPreviewJson>>>,
+    /// Current user's muted status
+    is_muted: bool,
+}
+
+/// Participant preview from JSON subquery
+#[derive(Debug, Deserialize)]
+struct ParticipantPreviewJson {
+    user_id: Uuid,
+    role: String,
 }
 
 /// Participant row from database
@@ -168,6 +198,69 @@ impl ConversationService {
         }).collect())
     }
 
+    /// Get participants with pagination for lazy loading
+    /// Returns (participants, total_count, has_more)
+    pub async fn get_participants_paginated(
+        &self,
+        conversation_id: Uuid,
+        offset: u32,
+        limit: u32,
+    ) -> Result<(Vec<ParticipantInfo>, u32, bool), ConversationError> {
+        // Get total count
+        let count_row: (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM conversation_participants
+            WHERE conversation_id = $1 AND tenant_id = $2 AND left_at IS NULL
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(&self.tenant_id)
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(|e| ConversationError::Database(e.to_string()))?;
+
+        let total_count = count_row.0 as u32;
+
+        // Fetch paginated participants, ordered by role (owner first, then admin, then member) and join time
+        let rows = sqlx::query_as::<_, ParticipantRow>(
+            r#"
+            SELECT conversation_id, user_id, tenant_id, role, joined_at, left_at,
+                   last_read_message_id, last_read_at, is_muted, muted_at
+            FROM conversation_participants
+            WHERE conversation_id = $1 AND tenant_id = $2 AND left_at IS NULL
+            ORDER BY CASE role
+                WHEN 'owner' THEN 0
+                WHEN 'admin' THEN 1
+                ELSE 2
+            END, joined_at
+            LIMIT $3 OFFSET $4
+            "#,
+        )
+        .bind(conversation_id)
+        .bind(&self.tenant_id)
+        .bind(limit as i64)
+        .bind(offset as i64)
+        .fetch_all(self.pool.as_ref())
+        .await
+        .map_err(|e| ConversationError::Database(e.to_string()))?;
+
+        let participants: Vec<ParticipantInfo> = rows.into_iter().map(|r| ParticipantInfo {
+            user_id: r.user_id,
+            name: None, // Would need user service
+            avatar_url: None,
+            role: match r.role.as_str() {
+                "owner" => ParticipantRole::Owner,
+                "admin" => ParticipantRole::Admin,
+                _ => ParticipantRole::Member,
+            },
+        }).collect();
+
+        let has_more = (offset + limit) < total_count;
+
+        Ok((participants, total_count, has_more))
+    }
+
     /// Create a new conversation
     pub async fn create_conversation(
         &self,
@@ -267,23 +360,55 @@ impl ConversationService {
         Ok(row.map(|r| r.into_conversation()))
     }
 
-    /// Get user's conversation list with last message preview
+    /// Get user's conversation list with last message preview (optimized with participant preview)
+    ///
+    /// Uses a single optimized query with embedded participant preview to eliminate N+1 queries.
+    /// Only loads `preview_count` participants per conversation for bandwidth optimization.
     pub async fn get_user_conversations(
         &self,
         user_id: Uuid,
         before: Option<i64>,
         limit: u32,
     ) -> Result<(Vec<ConversationSummary>, bool), ConversationError> {
-        let limit = limit.min(50) as i64;
+        // Use default preview count of 5 participants
+        self.get_user_conversations_with_preview(user_id, before, limit, 5).await
+    }
 
+    /// Get user's conversation list with configurable participant preview count
+    ///
+    /// This optimized version uses a single query with embedded participant preview,
+    /// eliminating the N+1 query problem. Only the first `preview_count` participants
+    /// are loaded for each conversation.
+    pub async fn get_user_conversations_with_preview(
+        &self,
+        user_id: Uuid,
+        before: Option<i64>,
+        limit: u32,
+        preview_count: usize,
+    ) -> Result<(Vec<ConversationSummary>, bool), ConversationError> {
+        let limit = limit.min(50) as i64;
+        let preview_count = preview_count.min(20) as i64; // Cap at 20 for safety
+
+        // Optimized query with participant preview embedded as JSON subquery
         let conversations = if let Some(before_ts) = before {
             let before_time = DateTime::from_timestamp_millis(before_ts)
                 .ok_or_else(|| ConversationError::Database("Invalid timestamp".to_string()))?;
 
-            sqlx::query_as::<_, ConversationRow>(
+            sqlx::query_as::<_, ConversationWithPreviewRow>(
                 r#"
                 SELECT c.id, c.tenant_id, c.type, c.name, c.avatar_url, c.created_by,
-                       c.created_at, c.updated_at, c.participant_count, c.last_message_id, c.last_message_at
+                       c.created_at, c.updated_at, c.participant_count, c.last_message_id, c.last_message_at,
+                       (
+                           SELECT COALESCE(json_agg(json_build_object('user_id', pp.user_id, 'role', pp.role)), '[]'::json)
+                           FROM (
+                               SELECT user_id, role
+                               FROM conversation_participants
+                               WHERE conversation_id = c.id AND tenant_id = $2 AND left_at IS NULL
+                               ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, joined_at
+                               LIMIT $5
+                           ) pp
+                       ) as participant_preview,
+                       p.is_muted
                 FROM conversations c
                 INNER JOIN conversation_participants p ON c.id = p.conversation_id
                 WHERE p.user_id = $1 AND p.tenant_id = $2 AND p.left_at IS NULL
@@ -296,14 +421,26 @@ impl ConversationService {
             .bind(&self.tenant_id)
             .bind(before_time)
             .bind(limit + 1)
+            .bind(preview_count)
             .fetch_all(self.pool.as_ref())
             .await
             .map_err(|e| ConversationError::Database(e.to_string()))?
         } else {
-            sqlx::query_as::<_, ConversationRow>(
+            sqlx::query_as::<_, ConversationWithPreviewRow>(
                 r#"
                 SELECT c.id, c.tenant_id, c.type, c.name, c.avatar_url, c.created_by,
-                       c.created_at, c.updated_at, c.participant_count, c.last_message_id, c.last_message_at
+                       c.created_at, c.updated_at, c.participant_count, c.last_message_id, c.last_message_at,
+                       (
+                           SELECT COALESCE(json_agg(json_build_object('user_id', pp.user_id, 'role', pp.role)), '[]'::json)
+                           FROM (
+                               SELECT user_id, role
+                               FROM conversation_participants
+                               WHERE conversation_id = c.id AND tenant_id = $2 AND left_at IS NULL
+                               ORDER BY CASE role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, joined_at
+                               LIMIT $4
+                           ) pp
+                       ) as participant_preview,
+                       p.is_muted
                 FROM conversations c
                 INNER JOIN conversation_participants p ON c.id = p.conversation_id
                 WHERE p.user_id = $1 AND p.tenant_id = $2 AND p.left_at IS NULL
@@ -314,28 +451,32 @@ impl ConversationService {
             .bind(user_id)
             .bind(&self.tenant_id)
             .bind(limit + 1)
+            .bind(preview_count)
             .fetch_all(self.pool.as_ref())
             .await
             .map_err(|e| ConversationError::Database(e.to_string()))?
         };
 
         let has_more = conversations.len() > limit as usize;
-        let conversations: Vec<Conversation> = conversations
-            .into_iter()
-            .take(limit as usize)
-            .map(|r| r.into_conversation())
-            .collect();
 
-        // Build summaries with participants and last message
-        let mut summaries = Vec::with_capacity(conversations.len());
-        for conv in conversations {
-            let participants = self.get_participants(conv.id).await?;
-            let participant_infos: Vec<ParticipantInfo> = participants.iter().map(|p| ParticipantInfo {
-                user_id: p.user_id,
-                name: None, // Would need user service
-                avatar_url: None,
-                role: p.role,
-            }).collect();
+        // Build summaries from the optimized query result
+        let mut summaries = Vec::with_capacity(limit as usize);
+        for conv in conversations.into_iter().take(limit as usize) {
+            // Parse participant preview from JSON
+            let participant_infos: Vec<ParticipantInfo> = conv.participant_preview
+                .map(|preview| {
+                    preview.0.into_iter().map(|p| ParticipantInfo {
+                        user_id: p.user_id,
+                        name: None,
+                        avatar_url: None,
+                        role: match p.role.as_str() {
+                            "owner" => ParticipantRole::Owner,
+                            "admin" => ParticipantRole::Admin,
+                            _ => ParticipantRole::Member,
+                        },
+                    }).collect()
+                })
+                .unwrap_or_default();
 
             // Get last message preview if exists
             let last_message = if let Some(msg_id) = conv.last_message_id {
@@ -344,26 +485,20 @@ impl ConversationService {
                 None
             };
 
-            // Get unread count (would use Redis in production)
-            let unread_count = 0u64; // TODO: Get from Redis
-
-            // Check if user has muted this conversation
-            let is_muted = participants.iter()
-                .find(|p| p.user_id == user_id)
-                .map(|p| p.is_muted)
-                .unwrap_or(false);
-
             summaries.push(ConversationSummary {
                 id: conv.id,
-                conversation_type: conv.conversation_type,
+                conversation_type: match conv.conversation_type.as_str() {
+                    "group" => ConversationType::Group,
+                    _ => ConversationType::Direct,
+                },
                 name: conv.name,
                 avatar_url: conv.avatar_url,
-                participant_count: conv.participant_count,
+                participant_count: conv.participant_count as u32,
                 participants: participant_infos,
                 last_message,
-                unread_count,
+                unread_count: 0, // TODO: Get from Redis
                 updated_at: conv.updated_at.timestamp_millis(),
-                is_muted,
+                is_muted: conv.is_muted,
             });
         }
 

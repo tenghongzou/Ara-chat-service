@@ -39,6 +39,8 @@ pub struct Settings {
     pub compression: CompressionSettings,
     #[serde(default)]
     pub subscription: SubscriptionSettings,
+    #[serde(default)]
+    pub participant: ParticipantSettings,
 }
 
 fn default_host() -> String {
@@ -654,6 +656,42 @@ fn default_max_subscriptions() -> usize {
     100
 }
 
+/// Participant loading settings for lazy loading optimization
+#[derive(Debug, Clone, Deserialize)]
+pub struct ParticipantSettings {
+    /// Number of participants to include in conversation preview (default: 5)
+    #[serde(default = "default_preview_count")]
+    pub preview_count: usize,
+    /// Default participants per page when fetching full list (default: 50)
+    #[serde(default = "default_page_size")]
+    pub page_size: usize,
+    /// Maximum page size allowed (default: 100)
+    #[serde(default = "default_max_page_size")]
+    pub max_page_size: usize,
+}
+
+impl Default for ParticipantSettings {
+    fn default() -> Self {
+        Self {
+            preview_count: default_preview_count(),
+            page_size: default_page_size(),
+            max_page_size: default_max_page_size(),
+        }
+    }
+}
+
+fn default_preview_count() -> usize {
+    5
+}
+
+fn default_page_size() -> usize {
+    50
+}
+
+fn default_max_page_size() -> usize {
+    100
+}
+
 impl Settings {
     /// Create minimal settings for testing (no external dependencies)
     #[cfg(any(test, feature = "test-utils"))]
@@ -695,6 +733,7 @@ impl Settings {
             email: EmailSettings::default(),
             compression: CompressionSettings::default(),
             subscription: SubscriptionSettings::default(),
+            participant: ParticipantSettings::default(),
         }
     }
 
