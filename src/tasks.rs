@@ -8,6 +8,7 @@
 //! - Partition management (permanent storage)
 //! - Cluster message subscriber
 //! - Link preview processing
+//! - Email notification processing
 
 use std::time::{Duration, Instant};
 
@@ -42,9 +43,10 @@ impl BackgroundTasks {
         let partition_state = state.clone();
         let cluster_state = state.clone();
         let link_preview_state = state.clone();
+        let email_processor_state = state.clone();
 
         // Track active tasks
-        let task_count = if state.settings.cluster.enabled { 7 } else { 6 };
+        let task_count = if state.settings.cluster.enabled { 8 } else { 7 };
         metrics::ACTIVE_TASKS.set(task_count);
 
         let heartbeat = run_heartbeat(heartbeat_state);
@@ -54,6 +56,7 @@ impl BackgroundTasks {
         let partition_mgmt = run_partition_management(partition_state);
         let cluster_sub = run_cluster_subscriber(cluster_state);
         let link_preview = run_link_preview_processor(link_preview_state);
+        let email_processor = run_email_processor(email_processor_state);
 
         tokio::select! {
             _ = heartbeat => {
@@ -76,6 +79,9 @@ impl BackgroundTasks {
             },
             _ = link_preview => {
                 tracing::warn!("Link preview processor task exited unexpectedly");
+            },
+            _ = email_processor => {
+                tracing::warn!("Email processor task exited unexpectedly");
             },
             _ = shutdown_rx.recv() => {
                 tracing::info!("Background tasks received shutdown signal");
@@ -458,3 +464,31 @@ async fn run_link_preview_processor(state: AppState) {
 }
 
 use chrono::Timelike;
+
+/// Email processor task - sends queued email notifications
+async fn run_email_processor(state: AppState) {
+    let Some(ref service) = state.email_service else {
+        tracing::info!("Email service not available, processor not started");
+        std::future::pending::<()>().await;
+        return;
+    };
+
+    // Process pending emails every 10 seconds
+    let mut ticker = tokio::time::interval(Duration::from_secs(10));
+
+    tracing::info!("Email processor started");
+
+    loop {
+        ticker.tick().await;
+
+        match service.process_pending(50).await {
+            Ok(count) if count > 0 => {
+                tracing::debug!(sent = count, "Processed email queue");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to process email queue");
+            }
+            _ => {}
+        }
+    }
+}

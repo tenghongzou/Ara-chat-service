@@ -195,6 +195,28 @@ Project status and planned features for Ara Chat Service.
   - `DELETE /api/v1/emoji-packs/{id}` - Delete pack
 - [x] Database migration: `015_custom_emojis.sql`
 
+### Email Notification / 郵件通知 *(v1.9.0)*
+- [x] Email notifications for offline users / 離線用戶郵件通知
+- [x] SMTP backend via lettre / SMTP 後端
+- [x] SendGrid HTTP API backend / SendGrid HTTP API 後端
+- [x] Configurable delay (default 2 min) / 可配置延遲（預設 2 分鐘）
+- [x] Message batching within window / 訊息批次合併
+- [x] User email preferences / 用戶郵件偏好設定
+  - Enable/disable email notifications / 啟用/停用郵件通知
+  - Message notifications / 訊息通知
+  - @mention notifications / @提及通知
+  - Digest mode (immediate/daily) / 摘要模式
+  - Quiet hours (UTC) / 靜音時段
+- [x] Rate limiting (default 5/hour) / 限流（預設每小時 5 封）
+- [x] HTML/text email templates / HTML/文字郵件模板
+- [x] Background queue processor (10s interval) / 背景佇列處理器
+- [x] REST API endpoints / REST API 端點
+  - `GET /api/v1/email/preferences` - Get email preferences
+  - `PUT /api/v1/email/preferences` - Update preferences
+  - `POST /api/v1/email/test` - Send test email
+  - `GET /api/v1/email/status` - Get email service status
+- [x] Database migration: `016_email_notifications.sql`
+
 ---
 
 ## Planned Features / 計劃中功能
@@ -229,7 +251,7 @@ Project status and planned features for Ara Chat Service.
 
 #### Integration / 整合
 - [x] Notification service integration (Redis Pub/Sub) / 通知服務整合 *(v1.2.0)*
-- [ ] Email notification for offline users / 離線用戶郵件通知
+- [x] Email notification for offline users / 離線用戶郵件通知 *(v1.9.0)*
 
 ### Low Priority / 低優先級
 
@@ -311,6 +333,9 @@ Project status and planned features for Ara Chat Service.
 ### v1.8.0 (Completed)
 - ~~Custom emoji support~~ *(Completed: emoji upload with PNG/GIF/WebP support, emoji packs, shortcode system, search, 64x64 thumbnails, content hash deduplication, REST API)*
 
+### v1.9.0 (Completed)
+- ~~Email notification~~ *(Completed: offline user email notifications, SMTP/SendGrid backends, configurable delay, message batching, user preferences, quiet hours, rate limiting, REST API)*
+
 ### v2.0.0 (Future)
 - End-to-end encryption
 - Voice messages
@@ -335,3 +360,4 @@ Last updated: 2026-01-04
 9. `013_link_previews.sql` - Link preview metadata storage
 10. `014_rendering_hints.sql` - Markdown rendering hints (JSONB column)
 11. `015_custom_emojis.sql` - Custom emoji and emoji packs
+12. `016_email_notifications.sql` - Email preferences, queue, and rate limits

@@ -13,6 +13,7 @@ use crate::cluster::{ClusterRouter, MemorySessionStore, RedisSessionStore, Sessi
 use crate::config::Settings;
 use crate::connection::{ConnectionLimits, ConnectionManager};
 use crate::conversation::ConversationService;
+use crate::email::EmailService;
 use crate::emoji::EmojiService;
 use crate::gdpr::{GdprService, GdprServiceConfig};
 use crate::link_preview::LinkPreviewService;
@@ -52,6 +53,7 @@ pub struct AppState {
     pub blocking_service: Option<Arc<BlockingService>>,
     pub link_preview_service: Option<Arc<LinkPreviewService>>,
     pub emoji_service: Option<Arc<EmojiService>>,
+    pub email_service: Option<Arc<EmailService>>,
     pub start_time: Instant,
 }
 
@@ -94,6 +96,7 @@ impl AppState {
             blocking_service: None,
             link_preview_service: None,
             emoji_service: None,
+            email_service: None,
             start_time: Instant::now(),
         })
     }
@@ -349,6 +352,28 @@ impl AppState {
             None
         };
 
+        // Create email service (only if PostgreSQL is available and email is enabled)
+        let email_service = if let Some(ref pg_pool) = postgres_pool {
+            if settings.email.enabled {
+                let sqlx_pool: Arc<PgPool> = Arc::new(pg_pool.pool().clone());
+                match EmailService::new(sqlx_pool, &settings.email) {
+                    Ok(service) => {
+                        tracing::info!(backend = service.backend_name(), "Email service initialized");
+                        Some(Arc::new(service))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to initialize email service");
+                        None
+                    }
+                }
+            } else {
+                tracing::info!("Email service disabled");
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             settings: Arc::new(settings),
             jwt_validator,
@@ -374,6 +399,7 @@ impl AppState {
             blocking_service,
             link_preview_service,
             emoji_service,
+            email_service,
             start_time: Instant::now(),
         })
     }

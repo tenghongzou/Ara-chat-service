@@ -33,6 +33,8 @@ pub struct Settings {
     pub notification: NotificationSettings,
     #[serde(default)]
     pub gdpr: GdprSettings,
+    #[serde(default)]
+    pub email: EmailSettings,
 }
 
 fn default_host() -> String {
@@ -421,6 +423,148 @@ fn default_gdpr_audit_retention_years() -> u32 {
     7
 }
 
+/// Email backend type
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum EmailBackend {
+    #[default]
+    Smtp,
+    SendGrid,
+}
+
+/// Email notification settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmailSettings {
+    /// Enable email notifications for offline users
+    #[serde(default)]
+    pub enabled: bool,
+    /// Email backend: smtp or sendgrid
+    #[serde(default)]
+    pub backend: EmailBackend,
+    /// Delay in seconds before sending email (to avoid emails for quick reconnects)
+    #[serde(default = "default_email_delay")]
+    pub delay_seconds: u32,
+    /// Maximum messages to batch into a single email
+    #[serde(default = "default_email_batch_size")]
+    pub max_batch_size: usize,
+    /// Batch window in seconds (combine messages within this window)
+    #[serde(default = "default_email_batch_window")]
+    pub batch_window_seconds: u32,
+    /// Maximum emails per user per hour
+    #[serde(default = "default_email_rate_limit")]
+    pub max_emails_per_hour: u32,
+    /// Sender email address
+    #[serde(default)]
+    pub from_address: Option<String>,
+    /// Sender display name
+    #[serde(default = "default_email_from_name")]
+    pub from_name: String,
+
+    // SMTP settings
+    /// SMTP server host
+    #[serde(default)]
+    pub smtp_host: Option<String>,
+    /// SMTP server port
+    #[serde(default)]
+    pub smtp_port: Option<u16>,
+    /// SMTP username
+    #[serde(default)]
+    pub smtp_username: Option<String>,
+    /// SMTP password
+    #[serde(default)]
+    pub smtp_password: Option<String>,
+    /// Use TLS for SMTP
+    #[serde(default = "default_true")]
+    pub smtp_tls: bool,
+
+    // SendGrid settings
+    /// SendGrid API key
+    #[serde(default)]
+    pub sendgrid_api_key: Option<String>,
+
+    /// Template settings
+    #[serde(default)]
+    pub templates: EmailTemplateSettings,
+}
+
+impl Default for EmailSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            backend: EmailBackend::Smtp,
+            delay_seconds: default_email_delay(),
+            max_batch_size: default_email_batch_size(),
+            batch_window_seconds: default_email_batch_window(),
+            max_emails_per_hour: default_email_rate_limit(),
+            from_address: None,
+            from_name: default_email_from_name(),
+            smtp_host: None,
+            smtp_port: None,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_tls: true,
+            sendgrid_api_key: None,
+            templates: EmailTemplateSettings::default(),
+        }
+    }
+}
+
+/// Email template settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct EmailTemplateSettings {
+    /// Application name for email templates
+    #[serde(default = "default_email_app_name")]
+    pub app_name: String,
+    /// Application URL for links in emails
+    #[serde(default = "default_email_app_url")]
+    pub app_url: String,
+    /// Logo URL for email header
+    #[serde(default)]
+    pub logo_url: Option<String>,
+    /// Unsubscribe URL
+    #[serde(default)]
+    pub unsubscribe_url: Option<String>,
+}
+
+impl Default for EmailTemplateSettings {
+    fn default() -> Self {
+        Self {
+            app_name: default_email_app_name(),
+            app_url: default_email_app_url(),
+            logo_url: None,
+            unsubscribe_url: None,
+        }
+    }
+}
+
+fn default_email_delay() -> u32 {
+    120 // 2 minutes
+}
+
+fn default_email_batch_size() -> usize {
+    10
+}
+
+fn default_email_batch_window() -> u32 {
+    300 // 5 minutes
+}
+
+fn default_email_rate_limit() -> u32 {
+    5
+}
+
+fn default_email_from_name() -> String {
+    "Ara Chat".to_string()
+}
+
+fn default_email_app_name() -> String {
+    "Ara".to_string()
+}
+
+fn default_email_app_url() -> String {
+    "https://app.ara.com".to_string()
+}
+
 impl Settings {
     /// Create minimal settings for testing (no external dependencies)
     #[cfg(any(test, feature = "test-utils"))]
@@ -459,6 +603,7 @@ impl Settings {
             file_storage: FileStorageSettings::default(),
             notification: NotificationSettings::default(),
             gdpr: GdprSettings::default(),
+            email: EmailSettings::default(),
         }
     }
 

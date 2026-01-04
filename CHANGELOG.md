@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Email Notification for Offline Users**: Send email notifications when offline users receive messages
+  - SMTP backend via lettre crate with TLS support
+  - SendGrid HTTP API backend for cloud deployment
+  - Configurable delay before sending (default 2 minutes, avoids email for quick reconnects)
+  - Message batching within time window (default 5 minutes)
+  - User email preferences:
+    - Enable/disable email notifications
+    - Message notifications toggle
+    - @mention notifications toggle
+    - Digest mode (immediate or daily)
+    - Quiet hours (UTC-based, skip sending during specified hours)
+  - Rate limiting (default 5 emails per hour per user)
+  - HTML and plain text email templates
+  - Background queue processor (10-second interval)
+  - REST API endpoints:
+    - `GET /api/v1/email/preferences` - Get user email preferences
+    - `PUT /api/v1/email/preferences` - Update email preferences
+    - `POST /api/v1/email/test` - Send test email to verify configuration
+    - `GET /api/v1/email/status` - Check email service status
+  - Configurable via `CHAT__EMAIL__*` environment variables
+  - Database migration: `016_email_notifications.sql`
 - **Custom Emoji Support**: User-uploaded custom emojis with pack management
   - Upload custom emoji images (PNG, GIF, WebP)
   - Emoji packs for grouping related emojis
@@ -209,3 +230,4 @@ Current migrations:
 9. `013_link_previews.sql` - Link preview metadata storage
 10. `014_rendering_hints.sql` - Markdown rendering hints (JSONB column)
 11. `015_custom_emojis.sql` - Custom emoji and emoji packs
+12. `016_email_notifications.sql` - Email preferences, queue, and rate limits

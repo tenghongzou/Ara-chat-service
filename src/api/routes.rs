@@ -8,6 +8,7 @@ use axum::{
 
 use crate::server::AppState;
 use super::attachment;
+use super::email;
 use super::emoji;
 use super::gdpr;
 use super::health::{
@@ -87,6 +88,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/emoji-packs/{id}", get(emoji::get_pack))
         .route("/api/v1/emoji-packs/{id}", patch(emoji::update_pack))
         .route("/api/v1/emoji-packs/{id}", delete(emoji::delete_pack))
+        // REST API - Email Notifications
+        .route("/api/v1/email/preferences", get(email::get_preferences))
+        .route("/api/v1/email/preferences", axum::routing::put(email::update_preferences))
+        .route("/api/v1/email/test", post(email::send_test_email))
+        .route("/api/v1/email/status", get(email::get_status))
         // Apply middleware
         .layer(middleware::from_fn(request_id_middleware))
         .with_state(state)
