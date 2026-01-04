@@ -63,7 +63,7 @@ Project status and planned features for Ara Chat Service.
   - authentication/authorization: 12 tests
   - request ID middleware: 2 tests
   - WebSocket protocol: 4 tests
-- [x] Database migration tests: 9 tests passing / 資料庫遷移測試：9 項通過
+- [x] Database migration tests: 10 tests passing / 資料庫遷移測試：10 項通過
 
 ### Documentation / 文檔
 - [x] README.md
@@ -72,6 +72,15 @@ Project status and planned features for Ara Chat Service.
 - [x] Bilingual docs (en/zh-TW) / 雙語文檔
 - [x] CONTRIBUTING.md
 - [x] CHANGELOG.md
+
+### File Handling / 檔案處理 *(v1.1.0)*
+- [x] File upload with multipart support / 多部分上傳
+- [x] Local filesystem storage / 本地檔案儲存
+- [x] S3/MinIO integration / S3/MinIO 整合
+- [x] Image thumbnail generation / 圖片縮圖生成
+- [x] Content hash deduplication / 內容雜湊去重
+- [x] MIME type validation / MIME 類型驗證
+- [x] 50MB file size limit / 50MB 檔案限制
 
 ---
 
@@ -93,10 +102,10 @@ Project status and planned features for Ara Chat Service.
 
 ### Medium Priority / 中優先級
 
-#### File Handling / 檔案處理
-- [ ] File upload support / 檔案上傳支援
-- [ ] Image upload and thumbnails / 圖片上傳與縮圖
-- [ ] File storage integration (S3/MinIO) / 檔案儲存整合
+#### File Handling / 檔案處理 *(v1.1.0)*
+- [x] File upload support / 檔案上傳支援
+- [x] Image upload and thumbnails / 圖片上傳與縮圖
+- [x] File storage integration (S3/MinIO) / 檔案儲存整合
 
 #### Advanced Features / 進階功能
 - [ ] Message threading (replies) / 訊息串（回覆）
@@ -156,15 +165,15 @@ Project status and planned features for Ara Chat Service.
 
 ## Milestones / 里程碑
 
-### v1.1.0 (Planned)
+### v1.1.0 (Completed)
 - ~~Unit tests coverage > 80%~~ *(Completed: 211 tests)*
 - ~~Input sanitization~~ *(Completed)*
 - ~~Search query security~~ *(Completed)*
 - ~~Full-text search index~~ *(Completed)*
 - ~~Technical debt cleanup~~ *(Completed: unified errors, request ID, Redis fallback)*
 - ~~Integration tests~~ *(Completed: 24 tests)*
-- ~~Database migration tests~~ *(Completed: 9 tests)*
-- File upload support
+- ~~Database migration tests~~ *(Completed: 10 tests)*
+- ~~File upload support~~ *(Completed: Local + S3/MinIO, thumbnails)*
 
 ### v1.2.0 (Planned)
 - Message threading

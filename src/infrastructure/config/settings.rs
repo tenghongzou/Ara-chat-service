@@ -27,6 +27,8 @@ pub struct Settings {
     pub otel: OtelSettings,
     #[serde(default)]
     pub cors: CorsSettings,
+    #[serde(default)]
+    pub file_storage: FileStorageSettings,
 }
 
 fn default_host() -> String {
@@ -221,6 +223,112 @@ fn default_cors_max_age() -> u64 {
     3600 // 1 hour
 }
 
+/// Storage backend type
+#[derive(Debug, Clone, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum StorageBackend {
+    #[default]
+    Local,
+    S3,
+}
+
+/// File storage settings
+#[derive(Debug, Clone, Deserialize)]
+pub struct FileStorageSettings {
+    /// Storage backend: local or s3
+    #[serde(default)]
+    pub backend: StorageBackend,
+
+    /// Maximum file size in bytes (default: 50MB)
+    #[serde(default = "default_max_file_size")]
+    pub max_file_size: usize,
+
+    /// Allowed MIME types (empty = allow all common types)
+    #[serde(default = "default_allowed_types")]
+    pub allowed_types: Vec<String>,
+
+    /// Enable thumbnail generation for images
+    #[serde(default = "default_thumbnail_enabled")]
+    pub thumbnail_enabled: bool,
+
+    /// Maximum thumbnail dimension in pixels
+    #[serde(default = "default_thumbnail_max_dimension")]
+    pub thumbnail_max_dimension: u32,
+
+    // Local storage settings
+    /// Local storage path
+    #[serde(default = "default_local_path")]
+    pub local_path: String,
+
+    // S3/MinIO settings
+    /// S3 bucket name
+    #[serde(default)]
+    pub s3_bucket: Option<String>,
+    /// S3 region
+    #[serde(default)]
+    pub s3_region: Option<String>,
+    /// S3/MinIO endpoint URL (for MinIO)
+    #[serde(default)]
+    pub s3_endpoint: Option<String>,
+    /// S3 access key
+    #[serde(default)]
+    pub s3_access_key: Option<String>,
+    /// S3 secret key
+    #[serde(default)]
+    pub s3_secret_key: Option<String>,
+    /// S3 public URL prefix (for generating public URLs)
+    #[serde(default)]
+    pub s3_public_url: Option<String>,
+}
+
+impl Default for FileStorageSettings {
+    fn default() -> Self {
+        Self {
+            backend: StorageBackend::Local,
+            max_file_size: default_max_file_size(),
+            allowed_types: default_allowed_types(),
+            thumbnail_enabled: default_thumbnail_enabled(),
+            thumbnail_max_dimension: default_thumbnail_max_dimension(),
+            local_path: default_local_path(),
+            s3_bucket: None,
+            s3_region: None,
+            s3_endpoint: None,
+            s3_access_key: None,
+            s3_secret_key: None,
+            s3_public_url: None,
+        }
+    }
+}
+
+fn default_max_file_size() -> usize {
+    52_428_800 // 50MB
+}
+
+fn default_allowed_types() -> Vec<String> {
+    vec![
+        "image/jpeg".to_string(),
+        "image/png".to_string(),
+        "image/gif".to_string(),
+        "image/webp".to_string(),
+        "application/pdf".to_string(),
+        "text/plain".to_string(),
+        "application/zip".to_string(),
+        "application/x-zip-compressed".to_string(),
+    ]
+}
+
+fn default_thumbnail_enabled() -> bool {
+    true
+}
+
+fn default_thumbnail_max_dimension() -> u32 {
+    200
+}
+
+fn default_local_path() -> String {
+    "./uploads".to_string()
+}
+
 impl Settings {
     /// Create minimal settings for testing (no external dependencies)
     #[cfg(any(test, feature = "test-utils"))]
@@ -256,6 +364,7 @@ impl Settings {
             },
             otel: OtelSettings::default(),
             cors: CorsSettings::default(),
+            file_storage: FileStorageSettings::default(),
         }
     }
 

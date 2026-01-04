@@ -1,5 +1,6 @@
 //! API layer - HTTP and WebSocket endpoints
 
+mod attachment;
 mod error;
 mod health;
 mod middleware;

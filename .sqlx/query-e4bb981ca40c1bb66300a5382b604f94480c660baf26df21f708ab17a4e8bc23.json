@@ -1,0 +1,97 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO attachments (\n                conversation_id, uploader_id, file_name, file_size,\n                mime_type, content_hash, storage_backend, storage_path,\n                thumbnail_path, created_at\n            )\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)\n            RETURNING id, conversation_id, message_id, uploader_id,\n                      file_name, file_size, mime_type, content_hash,\n                      storage_backend, storage_path, thumbnail_path,\n                      created_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "conversation_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "message_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "uploader_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 4,
+        "name": "file_name",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 5,
+        "name": "file_size",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "mime_type",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 7,
+        "name": "content_hash",
+        "type_info": "Bpchar"
+      },
+      {
+        "ordinal": 8,
+        "name": "storage_backend",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 9,
+        "name": "storage_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 10,
+        "name": "thumbnail_path",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 11,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Varchar",
+        "Int8",
+        "Varchar",
+        "Bpchar",
+        "Varchar",
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "e4bb981ca40c1bb66300a5382b604f94480c660baf26df21f708ab17a4e8bc23"
+}

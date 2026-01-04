@@ -21,6 +21,7 @@ fn test_migrations_exist() {
         "003_reactions.sql",
         "004_read_receipts.sql",
         "005_fulltext_search_index.sql",
+        "006_attachments.sql",
     ];
 
     for migration in &expected_migrations {
@@ -225,6 +226,50 @@ fn test_005_fulltext_index_migration() {
     assert!(
         content.contains("to_tsvector"),
         "Should use to_tsvector for full-text search"
+    );
+}
+
+/// Test attachments migration structure
+#[test]
+fn test_006_attachments_migration() {
+    let content = fs::read_to_string("migrations/006_attachments.sql")
+        .expect("Failed to read migration");
+
+    // Should create attachments table
+    assert!(
+        content.contains("CREATE TABLE") && content.contains("attachments"),
+        "Should create attachments table"
+    );
+
+    // Should reference conversation_id
+    assert!(
+        content.contains("conversation_id"),
+        "Should reference conversation_id"
+    );
+
+    // Should have file metadata fields
+    assert!(content.contains("file_name"), "Should have file_name");
+    assert!(content.contains("file_size"), "Should have file_size");
+    assert!(content.contains("mime_type"), "Should have mime_type");
+    assert!(content.contains("content_hash"), "Should have content_hash");
+
+    // Should have storage fields
+    assert!(content.contains("storage_backend"), "Should have storage_backend");
+    assert!(content.contains("storage_path"), "Should have storage_path");
+
+    // Should have thumbnail support
+    assert!(content.contains("thumbnail_path"), "Should have thumbnail_path");
+
+    // Should be idempotent
+    assert!(
+        content.contains("IF NOT EXISTS"),
+        "Should be idempotent with IF NOT EXISTS"
+    );
+
+    // Should have file size constraint
+    assert!(
+        content.contains("52428800"),
+        "Should have 50MB file size limit"
     );
 }
 

@@ -2,11 +2,12 @@
 
 use axum::{
     middleware,
-    routing::{get, post},
+    routing::{delete, get, post},
     Router,
 };
 
 use crate::server::AppState;
+use super::attachment;
 use super::health::{
     health_check,
     liveness_probe,
@@ -37,6 +38,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/v1/conversations/{id}/messages", get(rest::get_messages))
         .route("/api/v1/conversations/{id}/messages", post(rest::send_message))
         .route("/api/v1/conversations/{id}/read", post(rest::mark_read))
+        // REST API - Attachments
+        .route("/api/v1/conversations/{id}/upload", post(attachment::upload_file))
+        .route("/api/v1/conversations/{id}/attachments", get(attachment::list_attachments))
+        .route("/api/v1/files/{id}", get(attachment::get_attachment))
+        .route("/api/v1/files/{id}/download", get(attachment::download_attachment))
+        .route("/api/v1/files/{id}", delete(attachment::delete_attachment))
         // REST API - Unread counts
         .route("/api/v1/unread", get(rest::get_unread_counts))
         // REST API - Search

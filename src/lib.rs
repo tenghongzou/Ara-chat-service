@@ -28,6 +28,7 @@ pub use infrastructure::sharding;
 pub mod domain;
 
 // Re-export domain modules
+pub use domain::attachment;
 pub use domain::cluster;
 pub use domain::connection;
 pub use domain::conversation;

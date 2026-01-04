@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use sqlx::PgPool;
 
+use crate::attachment::AttachmentService;
 use crate::auth::{JwtError, JwtValidator};
 use crate::circuit_breaker::CircuitBreakers;
 use crate::cluster::{ClusterRouter, MemorySessionStore, RedisSessionStore, SessionStore};
@@ -40,6 +41,7 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub offline_queue: Arc<OfflineQueue>,
     pub circuit_breakers: Option<Arc<CircuitBreakers>>,
+    pub attachment_service: Option<Arc<AttachmentService>>,
     pub start_time: Instant,
 }
 
@@ -76,6 +78,7 @@ impl AppState {
             rate_limiter,
             offline_queue,
             circuit_breakers: None,
+            attachment_service: None,
             start_time: Instant::now(),
         })
     }
@@ -225,6 +228,31 @@ impl AppState {
                 (None, None, None, None, None)
             };
 
+        // Create attachment service (only if PostgreSQL and conversation service are available)
+        let attachment_service = if let (Some(ref pg_pool), Some(ref conv_service)) =
+            (&postgres_pool, &conversation_service)
+        {
+            let sqlx_pool: Arc<PgPool> = Arc::new(pg_pool.pool().clone());
+            match AttachmentService::from_settings(
+                sqlx_pool,
+                settings.file_storage.clone(),
+                conv_service.clone(),
+            )
+            .await
+            {
+                Ok(service) => {
+                    tracing::info!("Attachment service initialized");
+                    Some(Arc::new(service))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to initialize attachment service");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Ok(Self {
             settings: Arc::new(settings),
             jwt_validator,
@@ -244,6 +272,7 @@ impl AppState {
             rate_limiter,
             offline_queue,
             circuit_breakers,
+            attachment_service,
             start_time: Instant::now(),
         })
     }
