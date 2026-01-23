@@ -1396,7 +1396,7 @@ async fn handle_subscribe_conversations(
         let response = ServerMessage::SubscriptionUpdated {
             subscribed: vec![],
             unsubscribed: vec![],
-            total_subscriptions: subscriptions.len(),
+            total_subscriptions: subscriptions.count(),
         };
         state.connection_manager.send_to_user(&user_id, response.into()).await;
         return;
@@ -1404,25 +1404,26 @@ async fn handle_subscribe_conversations(
 
     // Subscribe to valid conversations
     let result = subscriptions.subscribe(&valid_ids);
+    let total = subscriptions.count();
 
     // Record metrics
-    if !result.added.is_empty() {
-        crate::metrics::record_subscription_change("subscribe", result.added.len());
+    if !result.subscribed.is_empty() {
+        crate::metrics::record_subscription_change("subscribe", result.subscribed.len());
     }
-    crate::metrics::record_subscription_count(result.total_subscriptions);
+    crate::metrics::record_subscription_count(total);
 
     // Send confirmation
     let response = ServerMessage::SubscriptionUpdated {
-        subscribed: result.added,
+        subscribed: result.subscribed,
         unsubscribed: vec![],
-        total_subscriptions: result.total_subscriptions,
+        total_subscriptions: total,
     };
     state.connection_manager.send_to_user(&user_id, response.into()).await;
 
     tracing::debug!(
         connection_id = %connection_id,
         user_id = %user_id,
-        total = result.total_subscriptions,
+        total = total,
         "Subscriptions updated"
     );
 }
@@ -1448,25 +1449,26 @@ async fn handle_unsubscribe_conversations(
 
     // Unsubscribe from conversations
     let result = subscriptions.unsubscribe(&conversation_ids);
+    let total = subscriptions.count();
 
     // Record metrics
-    if !result.removed.is_empty() {
-        crate::metrics::record_subscription_change("unsubscribe", result.removed.len());
+    if !result.unsubscribed.is_empty() {
+        crate::metrics::record_subscription_change("unsubscribe", result.unsubscribed.len());
     }
-    crate::metrics::record_subscription_count(result.total_subscriptions);
+    crate::metrics::record_subscription_count(total);
 
     // Send confirmation
     let response = ServerMessage::SubscriptionUpdated {
         subscribed: vec![],
-        unsubscribed: result.removed,
-        total_subscriptions: result.total_subscriptions,
+        unsubscribed: result.unsubscribed,
+        total_subscriptions: total,
     };
     state.connection_manager.send_to_user(&user_id, response.into()).await;
 
     tracing::debug!(
         connection_id = %connection_id,
         user_id = %user_id,
-        total = result.total_subscriptions,
+        total = total,
         "Unsubscriptions processed"
     );
 }

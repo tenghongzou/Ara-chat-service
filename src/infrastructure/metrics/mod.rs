@@ -4,9 +4,9 @@
 
 use lazy_static::lazy_static;
 use prometheus::{
-    register_counter_vec, register_gauge, register_gauge_vec, register_histogram_vec,
-    register_int_counter, register_int_gauge, register_int_gauge_vec,
-    CounterVec, Gauge, GaugeVec, HistogramVec, IntCounter, IntGauge, IntGaugeVec,
+    register_counter_vec, register_gauge, register_gauge_vec, register_histogram,
+    register_histogram_vec, register_int_counter, register_int_gauge, register_int_gauge_vec,
+    CounterVec, Gauge, GaugeVec, Histogram, HistogramVec, IntCounter, IntGauge, IntGaugeVec,
     Encoder, TextEncoder,
 };
 use std::time::Instant;

@@ -235,8 +235,11 @@ impl EmailService {
                         queued
                             .sender_ids
                             .get(i)
-                            .map(|id| &id.to_string()[..8])
-                            .unwrap_or("Unknown")
+                            .map(|id| {
+                                let s = id.to_string();
+                                if s.len() >= 8 { s[..8].to_string() } else { s }
+                            })
+                            .unwrap_or_else(|| "Unknown".to_string())
                     ),
                     content: preview.clone(),
                     timestamp: queued.scheduled_at.format("%H:%M").to_string(),

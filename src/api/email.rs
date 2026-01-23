@@ -65,30 +65,21 @@ fn extract_auth(
         .ok_or_else(|| {
             (
                 StatusCode::UNAUTHORIZED,
-                Json(ErrorResponse {
-                    error: "UNAUTHORIZED".into(),
-                    message: "Missing Authorization header".into(),
-                }),
+                Json(ErrorResponse::new("UNAUTHORIZED", "Missing Authorization header")),
             )
         })?;
 
     let token = auth_header.strip_prefix("Bearer ").ok_or_else(|| {
         (
             StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "UNAUTHORIZED".into(),
-                message: "Invalid Authorization header format".into(),
-            }),
+            Json(ErrorResponse::new("UNAUTHORIZED", "Invalid Authorization header format")),
         )
     })?;
 
     state.jwt_validator.validate(token).map_err(|e| {
         (
             StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "UNAUTHORIZED".into(),
-                message: format!("Invalid token: {}", e),
-            }),
+            Json(ErrorResponse::new("UNAUTHORIZED", format!("Invalid token: {}", e))),
         )
     })
 }
@@ -97,10 +88,7 @@ fn email_error_response(e: EmailError) -> (StatusCode, Json<ErrorResponse>) {
     let status = e.status_code();
     (
         status,
-        Json(ErrorResponse {
-            error: e.code().to_string(),
-            message: e.to_string(),
-        }),
+        Json(ErrorResponse::new(e.code(), e.to_string())),
     )
 }
 
@@ -111,15 +99,17 @@ pub async fn get_preferences(
     headers: HeaderMap,
 ) -> Result<Json<EmailPreferencesResponse>, (StatusCode, Json<ErrorResponse>)> {
     let claims = extract_auth(&state, &headers)?;
-    let user_id = claims.user_id();
+    let user_id = claims.user_id().map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse::new("INVALID_TOKEN", "Invalid user ID in token")),
+        )
+    })?;
 
     let service = state.email_service.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
-                error: "SERVICE_UNAVAILABLE".into(),
-                message: "Email service not available".into(),
-            }),
+            Json(ErrorResponse::new("SERVICE_UNAVAILABLE", "Email service not available")),
         )
     })?;
 
@@ -139,15 +129,17 @@ pub async fn update_preferences(
     Json(request): Json<UpdateEmailPreferencesRequest>,
 ) -> Result<Json<EmailPreferencesResponse>, (StatusCode, Json<ErrorResponse>)> {
     let claims = extract_auth(&state, &headers)?;
-    let user_id = claims.user_id();
+    let user_id = claims.user_id().map_err(|_| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse::new("INVALID_TOKEN", "Invalid user ID in token")),
+        )
+    })?;
 
     let service = state.email_service.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
-                error: "SERVICE_UNAVAILABLE".into(),
-                message: "Email service not available".into(),
-            }),
+            Json(ErrorResponse::new("SERVICE_UNAVAILABLE", "Email service not available")),
         )
     })?;
 
@@ -172,10 +164,7 @@ pub async fn send_test_email(
     let service = state.email_service.as_ref().ok_or_else(|| {
         (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ErrorResponse {
-                error: "SERVICE_UNAVAILABLE".into(),
-                message: "Email service not available".into(),
-            }),
+            Json(ErrorResponse::new("SERVICE_UNAVAILABLE", "Email service not available")),
         )
     })?;
 
