@@ -45,6 +45,9 @@ WORKDIR /app
 # Copy the binary from builder
 COPY --from=builder /app/target/release/ara-chat-service /app/chat-service
 
+# Copy migrations for runtime execution
+COPY --chown=appuser:appuser migrations /app/migrations
+
 # Create config directory
 RUN mkdir -p /app/config && chown -R appuser:appuser /app
 

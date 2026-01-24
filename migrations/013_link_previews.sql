@@ -3,6 +3,8 @@
 -- Feature: Link Preview (v1.6.0)
 
 -- Link preview metadata storage
+-- Note: No foreign key to messages table because it's partitioned
+-- Referential integrity is enforced at the application level
 CREATE TABLE IF NOT EXISTS link_previews (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     message_id UUID NOT NULL,
@@ -16,10 +18,7 @@ CREATE TABLE IF NOT EXISTS link_previews (
     status VARCHAR(20) NOT NULL DEFAULT 'pending',  -- pending, success, failed
     error TEXT,
     fetched_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-
-    CONSTRAINT fk_link_previews_message FOREIGN KEY (message_id)
-        REFERENCES messages(id) ON DELETE CASCADE
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Index for message lookup (get all previews for a message)

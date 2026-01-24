@@ -9,6 +9,7 @@ COMMENT ON COLUMN messages.rendering_hints IS 'Markdown rendering hints for clie
 
 -- Optional: Index for analytics queries on messages with markdown formatting
 -- This is a partial index that only includes rows with rendering hints
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_messages_has_rendering
+-- Note: Removed CONCURRENTLY as SQLx migrations run in transactions
+CREATE INDEX IF NOT EXISTS idx_messages_has_rendering
     ON messages ((rendering_hints IS NOT NULL))
     WHERE rendering_hints IS NOT NULL;
