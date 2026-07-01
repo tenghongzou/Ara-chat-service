@@ -187,7 +187,13 @@ impl From<JwtError> for ApiError {
         match err {
             JwtError::Validation(msg) => Self::InvalidToken(msg),
             JwtError::InvalidSubject => Self::InvalidToken("Invalid subject in token".to_string()),
-            JwtError::SecretTooShort { .. } => Self::Internal("JWT configuration error".to_string()),
+            JwtError::SecretTooShort { .. }
+            | JwtError::MissingSecret
+            | JwtError::MissingPublicKey
+            | JwtError::PublicKeyRead(..)
+            | JwtError::InvalidPublicKey(..) => {
+                Self::Internal("JWT configuration error".to_string())
+            }
         }
     }
 }

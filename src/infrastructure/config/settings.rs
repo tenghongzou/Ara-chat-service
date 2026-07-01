@@ -53,11 +53,16 @@ fn default_port() -> u16 {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct JwtSettings {
-    pub secret: String,
+    #[serde(default)]
+    pub secret: Option<String>,
     #[serde(default)]
     pub issuer: Option<String>,
     #[serde(default)]
     pub audience: Option<String>,
+    #[serde(default)]
+    pub algorithm: Option<String>,
+    #[serde(default)]
+    pub publickey: Option<String>,
 }
 
 impl From<&JwtSettings> for JwtConfig {
@@ -66,6 +71,8 @@ impl From<&JwtSettings> for JwtConfig {
             secret: settings.secret.clone(),
             issuer: settings.issuer.clone(),
             audience: settings.audience.clone(),
+            algorithm: settings.algorithm.clone(),
+            publickey: settings.publickey.clone(),
         }
     }
 }
@@ -700,9 +707,11 @@ impl Settings {
             host: "127.0.0.1".to_string(),
             port: 0, // Will be assigned by OS
             jwt: JwtSettings {
-                secret: "test-secret-key-that-is-at-least-32-characters-long".to_string(),
+                secret: Some("test-secret-key-that-is-at-least-32-characters-long".to_string()),
                 issuer: Some("test-issuer".to_string()),
                 audience: Some("test-audience".to_string()),
+                algorithm: None,
+                publickey: None,
             },
             redis: RedisSettings::default(),
             database: DatabaseSettings {
